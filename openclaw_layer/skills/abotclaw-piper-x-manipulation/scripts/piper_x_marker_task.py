@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Parse OpenClaw text into the PiPER-X marker/home tool command."""
+"""Parse OpenClaw text into the PiPER-X Agent Server marker/home command."""
 
 from __future__ import annotations
 
@@ -19,10 +19,7 @@ class PiperXMarkerTask:
     selected_robot: str = "PiPER-X"
 
     def runner_args(self, execute: bool = True) -> list[str]:
-        base = [
-            "python3",
-            "robot_layer/arm_piper_x/agent_server/run_piper_x_marker_task.py",
-        ]
+        base = ["python3", "robot_layer/arm_piper_x/agent_server/run_piper_x_agent_task.py"]
         if self.action == "approach":
             return base + ["approach", "--execute" if execute else "--plan-only"]
         if self.action == "touch":

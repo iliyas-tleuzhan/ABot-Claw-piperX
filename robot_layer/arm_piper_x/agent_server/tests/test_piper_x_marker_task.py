@@ -21,7 +21,7 @@ class PiperXMarkerParserTest(unittest.TestCase):
         parsed = self.parse("touch the aruco marker")
         self.assertEqual(parsed["action"], "touch")
         self.assertEqual(parsed["selected_robot"], "PiPER-X")
-        self.assertIn("robot_layer/arm_piper_x/agent_server/run_piper_x_marker_task.py", parsed["command_text"])
+        self.assertIn("robot_layer/arm_piper_x/agent_server/run_piper_x_agent_task.py", parsed["command_text"])
         self.assertIn("touch", parsed["command_text"])
         self.assertIn("--plan-only", parsed["command_text"])
 
