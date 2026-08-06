@@ -65,14 +65,18 @@ aruco:
   marker_size_m: 0.10
   pose_topic: /aruco_single/pose
 local_http_api:
-  base_url: http://127.0.0.1:8892
-  health: /health
-  approach_marker: /tools/piper/approach-marker
-  touch_marker: /tools/piper/touch-marker
-  go_home: /tools/piper/go-home
-  save_home: /tools/piper/save-home
+  agent_base_url: http://127.0.0.1:8893
+  low_level_marker_base_url: http://127.0.0.1:8892
+  agent_health: /health
+  agent_state: /state
+  agent_lease_acquire: /lease/acquire
+  agent_lease_release: /lease/release
+  approach_marker: /tools/approach-marker
+  touch_marker: /tools/touch-marker
+  go_home: /tools/go-home
+  save_home: /tools/save-home
 safety_boundary:
-  default_physical_execution: disabled unless PIPER_TOUCH_ALLOW_EXECUTION is exactly 1 or true
+  default_physical_execution: disabled unless PIPER_X_AGENT_ALLOW_EXECUTION and the low-level marker API execution gate are both enabled
   contact_confirmation: false
   completion_type: geometric_surface_approach
   unsupported_here:

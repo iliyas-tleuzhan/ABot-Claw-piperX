@@ -7,18 +7,22 @@ regular-Piper Agent Server path on `127.0.0.1:8888`.
 
 ## Current Supported PiPER-X Capability
 
-The active PiPER-X path is the ROS 2 Jazzy MoveIt wall-marker approach stack:
+The active PiPER-X path is the ROS 2 Jazzy MoveIt wall-marker approach stack
+wrapped by a PiPER-X Agent Server:
 
-- local HTTP API: `http://127.0.0.1:8892`
+- OpenClaw-facing Agent Server: `http://127.0.0.1:8893`
+- low-level marker/home bridge: `http://127.0.0.1:8892`
 - health: `GET /health`
-- approach marker: `POST /tools/piper/approach-marker`
-- geometric touch marker: `POST /tools/piper/touch-marker`
-- go to saved home pose: `POST /tools/piper/go-home`
-- save current pose as home: `POST /tools/piper/save-home`
+- state: `GET /state`
+- lease: `POST /lease/acquire`, `POST /lease/release`
+- approach marker: `POST /tools/approach-marker`
+- geometric touch marker: `POST /tools/touch-marker`
+- go to saved home pose: `POST /tools/go-home`
+- save current pose as home: `POST /tools/save-home`
 
-The robot-layer scripts here do not talk directly to CAN, MoveIt actions, or
-joint topics. They call the local ROS 2 bridge, which owns the live robot
-runtime.
+The Agent Server reads ROS 2 feedback topics for state and calls the low-level
+marker/home bridge for the already validated marker demo tools. It does not
+talk directly to CAN or expose arbitrary joint commands.
 
 ## Hardware Contract
 
@@ -63,6 +67,10 @@ Xacro, and mesh resources.
 This folder does not claim PiPER-X general tabletop pick/place support yet.
 Regular tabletop pick/place is still handled by `robot_layer/arm_piper`.
 
+The new Agent Server exposes fail-closed placeholders for gripper and generic
+pose commands. They must not be treated as available until the real PiPER-X ROS
+2 gripper/control interfaces and MoveIt pose validation are implemented.
+
 Current PiPER-X skills are marker/home skills only:
 
 - approach ArUco marker
@@ -76,11 +84,12 @@ small clearance from the fitted wall surface, not force-confirmed contact.
 ## Quick Checks
 
 ```bash
-python3 robot_layer/arm_piper_x/agent_server/run_piper_x_marker_task.py health
-python3 robot_layer/arm_piper_x/agent_server/run_piper_x_marker_task.py approach --plan-only
-python3 robot_layer/arm_piper_x/agent_server/run_piper_x_marker_task.py touch --plan-only --retract --return-home-after
-python3 robot_layer/arm_piper_x/agent_server/run_piper_x_marker_task.py save-home
-python3 robot_layer/arm_piper_x/agent_server/run_piper_x_marker_task.py home --plan-only
+python3 robot_layer/arm_piper_x/agent_server/run_piper_x_agent_task.py health
+python3 robot_layer/arm_piper_x/agent_server/run_piper_x_agent_task.py state
+python3 robot_layer/arm_piper_x/agent_server/run_piper_x_agent_task.py approach --plan-only
+python3 robot_layer/arm_piper_x/agent_server/run_piper_x_agent_task.py touch --plan-only --retract --return-home-after
+python3 robot_layer/arm_piper_x/agent_server/run_piper_x_agent_task.py save-home
+python3 robot_layer/arm_piper_x/agent_server/run_piper_x_agent_task.py home --plan-only
 ```
 
 Use `--execute` only when the ROS 2 stack health reports

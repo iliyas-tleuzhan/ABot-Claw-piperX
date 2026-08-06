@@ -10,17 +10,19 @@ This skill used to describe the old ROS 1 `piper-pipeline-testbed` MoveIt touch 
 That path is superseded for the current demo. Do not call the old
 `piper-pipeline-testbed` commands from this skill.
 
-Use the active `piper-touch-marker` skill contract instead:
+Use the active `piper-touch-marker` skill contract instead. OpenClaw should
+call the PiPER-X Agent Server on `8893`; the lower-level ROS 2 marker bridge
+remains on `8892`.
 
-- `approach the marker` -> `POST http://127.0.0.1:8892/tools/piper/approach-marker`
-- `touch the marker` -> `POST http://127.0.0.1:8892/tools/piper/touch-marker`
-- `go home` -> `POST http://127.0.0.1:8892/tools/piper/go-home`
-- `save current pose as home` -> `POST http://127.0.0.1:8892/tools/piper/save-home`
+- `approach the marker` -> `POST http://127.0.0.1:8893/tools/approach-marker`
+- `touch the marker` -> `POST http://127.0.0.1:8893/tools/touch-marker`
+- `go home` -> `POST http://127.0.0.1:8893/tools/go-home`
+- `save current pose as home` -> `POST http://127.0.0.1:8893/tools/save-home`
 
 Always call:
 
 ```bash
-curl -sS http://127.0.0.1:8892/health
+curl -sS http://127.0.0.1:8893/health
 ```
 
 before a physical command.

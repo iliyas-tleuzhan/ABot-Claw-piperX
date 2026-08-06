@@ -1,6 +1,6 @@
 ---
 name: abotclaw-piper-x-manipulation
-description: Route PiPER-X marker and home-pose commands through the ROS 2 Jazzy MoveIt wall-approach API. Use when the user asks the PiPER-X arm to approach/touch ArUco marker 6, press the marked location, go home, or save the current pose as home.
+description: Route PiPER-X marker and home-pose commands through the PiPER-X Agent Server on 127.0.0.1:8893. Use when the user asks the PiPER-X arm to approach/touch ArUco marker 6, press the marked location, go home, or save the current pose as home.
 ---
 
 # AbotClaw PiPER-X Manipulation
@@ -24,10 +24,12 @@ workcell stack.
 - Point cloud: `/camera/camera/depth/color/points`
 - ArUco pose: `/aruco_single/pose`
 - Marker: ID `6`, size `0.10 m`
-- Local API: `http://127.0.0.1:8892`
+- PiPER-X Agent Server: `http://127.0.0.1:8893`
+- Low-level marker bridge: `http://127.0.0.1:8892`
 
-The local API is served by the ROS 2 package
-`piper_x_aruco_wall_approach`. It uses ArUco, RealSense depth, hand-eye TF,
+The Agent Server is under
+`robot_layer/arm_piper_x/agent_server`. It wraps the lower-level ROS 2 package
+`piper_x_aruco_wall_approach`, which uses ArUco, RealSense depth, hand-eye TF,
 and MoveIt to approach a wall marker.
 
 ## Required Health Check
@@ -36,7 +38,7 @@ Always call health first:
 
 ```bash
 cd /home/dase-hw101/ABot-Claw &&
-python3 robot_layer/arm_piper_x/agent_server/run_piper_x_marker_task.py health
+python3 robot_layer/arm_piper_x/agent_server/run_piper_x_agent_task.py health
 ```
 
 For `approach` and `touch`, require:
@@ -48,6 +50,9 @@ For `approach` and `touch`, require:
 - `marker_task_service_available: true`
 - `joint_state_available: true`
 - `execution_allowed: true` for physical execution
+- a valid `/lease/acquire` lease for physical execution through the Agent Server.
+  The `run_piper_x_agent_task.py` helper acquires and releases this lease
+  automatically when `--execute` is used without `--lease-id`.
 
 For `go home`, marker and point-cloud readiness are not required. Require:
 
@@ -65,7 +70,7 @@ For "approach the marker", "point at the marker", or "move to the marker":
 
 ```bash
 cd /home/dase-hw101/ABot-Claw &&
-python3 robot_layer/arm_piper_x/agent_server/run_piper_x_marker_task.py \
+python3 robot_layer/arm_piper_x/agent_server/run_piper_x_agent_task.py \
   approach \
   --execute
 ```
@@ -76,7 +81,7 @@ returns to saved home:
 
 ```bash
 cd /home/dase-hw101/ABot-Claw &&
-python3 robot_layer/arm_piper_x/agent_server/run_piper_x_marker_task.py \
+python3 robot_layer/arm_piper_x/agent_server/run_piper_x_agent_task.py \
   touch \
   --execute \
   --retract \
@@ -87,7 +92,7 @@ For "go home":
 
 ```bash
 cd /home/dase-hw101/ABot-Claw &&
-python3 robot_layer/arm_piper_x/agent_server/run_piper_x_marker_task.py \
+python3 robot_layer/arm_piper_x/agent_server/run_piper_x_agent_task.py \
   home \
   --execute
 ```
@@ -96,7 +101,7 @@ For "save current pose as home" or "remember current pose as home":
 
 ```bash
 cd /home/dase-hw101/ABot-Claw &&
-python3 robot_layer/arm_piper_x/agent_server/run_piper_x_marker_task.py \
+python3 robot_layer/arm_piper_x/agent_server/run_piper_x_agent_task.py \
   save-home
 ```
 
@@ -120,6 +125,8 @@ python3 /home/dase-hw101/.openclaw/workspace/skills/abotclaw-piper-x-manipulatio
 
 - Do not use `robot_layer/arm_piper` for PiPER-X.
 - Do not call the regular Piper Agent Server at `127.0.0.1:8888` for PiPER-X.
+- Use `127.0.0.1:8893` for PiPER-X Agent Server commands.
+- Treat `127.0.0.1:8892` as the lower-level marker/home bridge, not the OpenClaw-facing Agent Server.
 - Do not import or call regular Piper `piper_sdk` from this skill.
 - Do not generate arbitrary joint, CAN, gripper, or MoveIt code.
 - Do not retry physical commands automatically.
