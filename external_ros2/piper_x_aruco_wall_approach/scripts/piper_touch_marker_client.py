@@ -85,8 +85,13 @@ def main():
     home.add_argument("--execute", action="store_true")
     home.add_argument("--duration", type=float, default=6.0)
 
+    previous = subparsers.add_parser("previous")
+    previous.add_argument("--execute", action="store_true")
+    previous.add_argument("--duration", type=float, default=6.0)
+
     save_home = subparsers.add_parser("save-home")
     save_home.add_argument("--pose-name", default="home")
+    subparsers.add_parser("save-previous")
 
     args = parser.parse_args()
     base_url = args.base_url.rstrip("/")
@@ -101,12 +106,30 @@ def main():
                 token=args.token,
             )
         )
+    if args.command == "previous":
+        return print_result(
+            *request_json(
+                "POST",
+                f"{base_url}/tools/piper/go-previous",
+                payload=home_payload(args),
+                token=args.token,
+            )
+        )
     if args.command == "save-home":
         return print_result(
             *request_json(
                 "POST",
                 f"{base_url}/tools/piper/save-home",
                 payload=save_home_payload(args),
+                token=args.token,
+            )
+        )
+    if args.command == "save-previous":
+        return print_result(
+            *request_json(
+                "POST",
+                f"{base_url}/tools/piper/save-previous",
+                payload={},
                 token=args.token,
             )
         )

@@ -6,6 +6,8 @@ It supports two commands:
 
 - `approach`: stop with `tcp_link` at a pre-touch clearance, default `0.05 m`.
 - `touch`: move to pre-touch, then make a slow geometric final approach, default final clearance `0.005 m`, then optionally retract.
+- `go-home`: move to the saved six-joint home pose.
+- `go-previous`: move back to the saved six-joint previous pose.
 
 There is no force or tactile sensor. A successful `touch` reports:
 
@@ -29,6 +31,7 @@ RealSense D435i color/depth
        -> plans/executess tcp_link targets through MoveIt
   -> /run_marker_task ROS 2 service
   -> piper_touch_marker_api HTTP bridge on 127.0.0.1:8892
+       -> saves previous pose before physical marker/home motion
   -> ABot-Claw piper-touch-marker skill
 ```
 
@@ -182,6 +185,28 @@ ros2 run piper_x_aruco_wall_approach piper_touch_marker_client.py touch \
   --retract
 ```
 
+Save current pose as the previous pose without moving:
+
+```bash
+ros2 run piper_x_aruco_wall_approach piper_touch_marker_client.py save-previous
+```
+
+Plan-only return to the previous pose:
+
+```bash
+ros2 run piper_x_aruco_wall_approach piper_touch_marker_client.py previous
+```
+
+Physical return to the previous pose, only after `PIPER_TOUCH_ALLOW_EXECUTION=1`:
+
+```bash
+ros2 run piper_x_aruco_wall_approach piper_touch_marker_client.py previous --execute
+```
+
+The previous pose is saved automatically before physical `approach`, `touch`,
+and `go-home` commands. If no previous pose file exists yet, call
+`save-previous` from a known safe pose before using `go-previous`.
+
 Equivalent HTTP:
 
 ```bash
@@ -194,7 +219,19 @@ curl -sS http://127.0.0.1:8892/tools/piper/touch-marker \
     "retract_after": true,
     "retract_distance_m": 0.05,
     "final_velocity_scaling": 0.05
-  }' | python3 -m json.tool
+}' | python3 -m json.tool
+```
+
+Previous-pose HTTP:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8892/tools/piper/save-previous \
+  -H 'Content-Type: application/json' \
+  -d '{}' | python3 -m json.tool
+
+curl -sS -X POST http://127.0.0.1:8892/tools/piper/go-previous \
+  -H 'Content-Type: application/json' \
+  -d '{"execute":true,"duration_s":6.0}' | python3 -m json.tool
 ```
 
 ## ROS Services and Topics
@@ -230,6 +267,8 @@ Approach the marker.
 Touch ArUco marker 6.
 Press the marked location.
 Move the Piper arm to the marker.
+Go back to the previous pose.
+Save current pose as previous pose.
 ```
 
 ABot-Claw must call `/health` first. It must not call `execute=true` unless health reports `execution_allowed: true`.

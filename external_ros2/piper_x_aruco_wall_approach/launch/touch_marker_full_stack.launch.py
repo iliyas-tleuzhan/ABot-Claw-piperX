@@ -29,6 +29,7 @@ def generate_launch_description():
     marker_timeout = LaunchConfiguration("marker_timeout")
     point_cloud_timeout = LaunchConfiguration("point_cloud_timeout")
     home_pose_file = LaunchConfiguration("home_pose_file")
+    previous_pose_file = LaunchConfiguration("previous_pose_file")
     joint_state_topic = LaunchConfiguration("joint_state_topic")
     joint_state_timeout = LaunchConfiguration("joint_state_timeout")
 
@@ -70,6 +71,14 @@ def generate_launch_description():
                 package_share,
                 "config",
                 "piper_x_home_pose.yaml",
+            ]),
+        ),
+        DeclareLaunchArgument(
+            "previous_pose_file",
+            default_value=PathJoinSubstitution([
+                package_share,
+                "config",
+                "piper_x_previous_pose.yaml",
             ]),
         ),
         SetEnvironmentVariable("PIPER_TOUCH_ALLOW_EXECUTION", execute_allowed),
@@ -180,6 +189,8 @@ def generate_launch_description():
                 point_cloud_timeout,
                 "--home-pose-file",
                 home_pose_file,
+                "--previous-pose-file",
+                previous_pose_file,
                 "--joint-state-topic",
                 joint_state_topic,
                 "--joint-state-timeout-s",

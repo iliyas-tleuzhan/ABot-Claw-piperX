@@ -124,6 +124,12 @@ class RosMarkerTaskAdapter:
     def save_home(self, request: SaveHomeRequest) -> Dict[str, Any]:
         raise NotImplementedError
 
+    def go_previous(self, request: HomeRequest) -> Dict[str, Any]:
+        raise NotImplementedError
+
+    def save_previous(self) -> Dict[str, Any]:
+        raise NotImplementedError
+
 
 class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
     def __init__(
@@ -135,6 +141,7 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         marker_timeout_s: float,
         point_cloud_timeout_s: float,
         home_pose_file: str,
+        previous_pose_file: str,
         joint_state_topic: str,
         joint_state_timeout_s: float,
     ):
@@ -148,7 +155,12 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         self.joint_state_topic = joint_state_topic
         self.joint_state_timeout_s = joint_state_timeout_s
         self.home_pose_file = str(Path(home_pose_file).expanduser())
+        self.previous_pose_file = str(Path(previous_pose_file).expanduser())
         self.home_joint_names, self.home_positions = self._load_home_pose(self.home_pose_file)
+        self.previous_joint_names, self.previous_positions = self._try_load_saved_pose(
+            self.previous_pose_file,
+            "previous",
+        )
         self._marker_received_monotonic_s: Optional[float] = None
         self._cloud_received_monotonic_s: Optional[float] = None
         self._joint_state_received_monotonic_s: Optional[float] = None
@@ -176,22 +188,39 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         )
 
     @staticmethod
-    def _load_home_pose(path: str):
+    def _default_previous_pose_file(home_pose_file: str) -> str:
+        return str(Path(home_pose_file).expanduser().with_name("piper_x_previous_pose.yaml"))
+
+    @staticmethod
+    def _load_saved_pose(path: str, pose_name: str):
         with open(path, "r", encoding="utf-8") as file:
             data = yaml.safe_load(file)
+        saved_pose_name = data.get("pose_name")
+        if saved_pose_name != pose_name:
+            raise ValueError(f"saved pose file {path} has pose_name={saved_pose_name!r}, expected {pose_name!r}")
         joint_state = data.get("joint_state", {})
         names = list(joint_state.get("names", []))
         positions = list(joint_state.get("positions_rad", []))
         if len(names) != len(positions):
-            raise ValueError(f"home pose has mismatched names/positions: {path}")
+            raise ValueError(f"saved pose has mismatched names/positions: {path}")
         selected = [
             (name, float(position))
             for name, position in zip(names, positions)
             if str(name).startswith("joint")
         ]
         if [name for name, _ in selected] != ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]:
-            raise ValueError(f"home pose must contain joint1..joint6 in order: {path}")
+            raise ValueError(f"saved pose must contain joint1..joint6 in order: {path}")
         return [name for name, _ in selected], [position for _, position in selected]
+
+    @classmethod
+    def _load_home_pose(cls, path: str):
+        return cls._load_saved_pose(path, "home")
+
+    @classmethod
+    def _try_load_saved_pose(cls, path: str, pose_name: str):
+        if not Path(path).expanduser().is_file():
+            return None, None
+        return cls._load_saved_pose(path, pose_name)
 
     @staticmethod
     def _stamp_to_seconds(msg: Any) -> Optional[float]:
@@ -320,23 +349,31 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
             "completion_type": str(response.completion_type),
         }
 
-    def go_home(self, request: HomeRequest) -> Dict[str, Any]:
+    def _execute_saved_joint_pose(
+        self,
+        pose_name: str,
+        joint_names,
+        positions,
+        request: HomeRequest,
+    ) -> Dict[str, Any]:
         if not self._home_client.wait_for_server(timeout_sec=1.0):
             raise RuntimeError("action /arm_controller/follow_joint_trajectory is not available")
+        if joint_names is None or positions is None:
+            raise RuntimeError(f"saved pose '{pose_name}' is not available")
         if not request.execute:
             return {
                 "success": True,
                 "stage": "complete",
-                "message": "home pose command is ready (execute=false)",
+                "message": f"{pose_name} pose command is ready (execute=false)",
                 "contact_confirmed": False,
-                "completion_type": "saved_home_pose",
+                "completion_type": f"saved_{pose_name}_pose",
             }
 
         goal = FollowJointTrajectory.Goal()
-        goal.trajectory.joint_names = list(self.home_joint_names)
+        goal.trajectory.joint_names = list(joint_names)
         point = JointTrajectoryPoint()
-        point.positions = list(self.home_positions)
-        point.velocities = [0.0] * len(self.home_positions)
+        point.positions = list(positions)
+        point.velocities = [0.0] * len(positions)
         duration = float(request.duration_s)
         point.time_from_start = Duration(
             sec=int(duration),
@@ -350,40 +387,54 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         while rclpy.ok() and not send_future.done() and time.monotonic() < deadline:
             time.sleep(0.05)
         if not send_future.done():
-            raise TimeoutError("timed out sending home trajectory goal")
+            raise TimeoutError(f"timed out sending {pose_name} trajectory goal")
         goal_handle = send_future.result()
         if goal_handle is None or not goal_handle.accepted:
-            raise RuntimeError("home trajectory goal was rejected")
+            raise RuntimeError(f"{pose_name} trajectory goal was rejected")
 
         result_future = goal_handle.get_result_async()
         deadline = time.monotonic() + max(20.0, request.duration_s + 10.0)
         while rclpy.ok() and not result_future.done() and time.monotonic() < deadline:
             time.sleep(0.05)
         if not result_future.done():
-            raise TimeoutError("timed out waiting for home trajectory result")
+            raise TimeoutError(f"timed out waiting for {pose_name} trajectory result")
         result = result_future.result()
         if result is None:
-            raise RuntimeError("home trajectory returned no result")
+            raise RuntimeError(f"{pose_name} trajectory returned no result")
         error_code = int(result.result.error_code)
         if error_code != 0:
             return {
                 "success": False,
-                "stage": "home_execution",
-                "message": f"home trajectory failed with error_code={error_code}",
+                "stage": f"{pose_name}_execution",
+                "message": f"{pose_name} trajectory failed with error_code={error_code}",
                 "contact_confirmed": False,
-                "completion_type": "saved_home_pose",
+                "completion_type": f"saved_{pose_name}_pose",
             }
         return {
             "success": True,
             "stage": "complete",
-            "message": "home trajectory completed",
+            "message": f"{pose_name} trajectory completed",
             "contact_confirmed": False,
-            "completion_type": "saved_home_pose",
+            "completion_type": f"saved_{pose_name}_pose",
         }
 
-    def save_home(self, request: SaveHomeRequest) -> Dict[str, Any]:
-        if request.pose_name != "home":
-            raise ValueError("only pose_name='home' is supported")
+    def go_home(self, request: HomeRequest) -> Dict[str, Any]:
+        return self._execute_saved_joint_pose("home", self.home_joint_names, self.home_positions, request)
+
+    def go_previous(self, request: HomeRequest) -> Dict[str, Any]:
+        if self.previous_joint_names is None or self.previous_positions is None:
+            self.previous_joint_names, self.previous_positions = self._try_load_saved_pose(
+                self.previous_pose_file,
+                "previous",
+            )
+        return self._execute_saved_joint_pose(
+            "previous",
+            self.previous_joint_names,
+            self.previous_positions,
+            request,
+        )
+
+    def _save_current_pose(self, path: str, pose_name: str, updated_by: str) -> Dict[str, Any]:
         now_monotonic_s = time.monotonic()
         with self._lock:
             joint_state = self._latest_joint_state
@@ -411,11 +462,11 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         stamp_s = self._stamp_to_seconds(joint_state)
         stamp_sec = int(stamp_s) if stamp_s is not None else 0
         stamp_nanosec = int((stamp_s - stamp_sec) * 1_000_000_000) if stamp_s is not None else 0
-        path = Path(self.home_pose_file).expanduser()
+        path = Path(path).expanduser()
         path.parent.mkdir(parents=True, exist_ok=True)
         data = {
-            "pose_name": "home",
-            "updated_by": "piper_touch_marker_api_save_home",
+            "pose_name": pose_name,
+            "updated_by": updated_by,
             "captured_at_wall_time_s": time.time(),
             "captured_at_ros_time": {
                 "sec": stamp_sec,
@@ -443,18 +494,38 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
             yaml.safe_dump(data, file, sort_keys=False)
         os.replace(tmp_path, path)
 
-        self.home_joint_names = joint_names
-        self.home_positions = positions
         return {
             "success": True,
             "stage": "complete",
-            "message": f"saved current pose as home: {path}",
+            "message": f"saved current pose as {pose_name}: {path}",
             "contact_confirmed": False,
-            "completion_type": "saved_home_pose_update",
-            "home_pose_file": str(path),
+            "completion_type": f"saved_{pose_name}_pose_update",
+            f"{pose_name}_pose_file": str(path),
             "joint_names": joint_names,
             "positions_rad": positions,
         }
+
+    def save_home(self, request: SaveHomeRequest) -> Dict[str, Any]:
+        if request.pose_name != "home":
+            raise ValueError("only pose_name='home' is supported")
+        result = self._save_current_pose(
+            self.home_pose_file,
+            "home",
+            "piper_touch_marker_api_save_home",
+        )
+        self.home_joint_names = result["joint_names"]
+        self.home_positions = result["positions_rad"]
+        return result
+
+    def save_previous(self) -> Dict[str, Any]:
+        result = self._save_current_pose(
+            self.previous_pose_file,
+            "previous",
+            "piper_touch_marker_api_save_previous",
+        )
+        self.previous_joint_names = result["joint_names"]
+        self.previous_positions = result["positions_rad"]
+        return result
 
 
 class FakeUnavailableAdapter(RosMarkerTaskAdapter):
@@ -468,6 +539,12 @@ class FakeUnavailableAdapter(RosMarkerTaskAdapter):
         raise RuntimeError("ROS adapter not initialized")
 
     def save_home(self, request: SaveHomeRequest) -> Dict[str, Any]:
+        raise RuntimeError("ROS adapter not initialized")
+
+    def go_previous(self, request: HomeRequest) -> Dict[str, Any]:
+        raise RuntimeError("ROS adapter not initialized")
+
+    def save_previous(self) -> Dict[str, Any]:
         raise RuntimeError("ROS adapter not initialized")
 
 
@@ -563,7 +640,10 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
         if not command_lock.acquire(blocking=False):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="another PiPER marker task is active")
         try:
+            previous_saved = adapter.save_previous() if request.execute else None
             result = adapter.run_task(mode, request)
+            if previous_saved is not None:
+                result["previous_pose_saved_before_motion"] = previous_saved
             if result.get("success", False) and request.execute and request.return_home_after:
                 home_result = adapter.go_home(HomeRequest(execute=True, duration_s=request.home_duration_s))
                 result["return_home_after"] = home_result
@@ -605,6 +685,22 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=result)
         return result
 
+    def run_save_previous_endpoint() -> Dict[str, Any]:
+        health_snapshot = adapter.health()
+        if not health_snapshot.joint_state_available:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="fresh joint state unavailable")
+        if not command_lock.acquire(blocking=False):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="another PiPER marker task is active")
+        try:
+            result = adapter.save_previous()
+        except Exception as exc:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+        finally:
+            command_lock.release()
+        if not result.get("success", False):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=result)
+        return result
+
     def run_home_endpoint(request: HomeRequest) -> Dict[str, Any]:
         validate_home_request(request)
         health_snapshot = adapter.health()
@@ -621,7 +717,37 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
         if not command_lock.acquire(blocking=False):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="another PiPER marker task is active")
         try:
+            previous_saved = adapter.save_previous() if request.execute else None
             result = adapter.go_home(request)
+            if previous_saved is not None:
+                result["previous_pose_saved_before_motion"] = previous_saved
+        except TimeoutError as exc:
+            raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+        finally:
+            command_lock.release()
+        if not result.get("success", False):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=result)
+        return result
+
+    def run_previous_endpoint(request: HomeRequest) -> Dict[str, Any]:
+        validate_home_request(request)
+        health_snapshot = adapter.health()
+        if request.execute and not health_snapshot.execution_allowed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="physical execution is disabled; set PIPER_TOUCH_ALLOW_EXECUTION=1",
+            )
+        if not health_snapshot.home_action_available:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="trajectory action unavailable",
+            )
+        if not command_lock.acquire(blocking=False):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="another PiPER marker task is active")
+        try:
+            result = adapter.go_previous(request)
         except TimeoutError as exc:
             raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail=str(exc)) from exc
         except Exception as exc:
@@ -653,12 +779,23 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
     ) -> Dict[str, Any]:
         return run_home_endpoint(request)
 
+    @app.post("/tools/piper/go-previous")
+    def go_previous(
+        request: HomeRequest,
+        _: None = Depends(require_auth),
+    ) -> Dict[str, Any]:
+        return run_previous_endpoint(request)
+
     @app.post("/tools/piper/save-home")
     def save_home(
         request: SaveHomeRequest,
         _: None = Depends(require_auth),
     ) -> Dict[str, Any]:
         return run_save_home_endpoint(request)
+
+    @app.post("/tools/piper/save-previous")
+    def save_previous(_: None = Depends(require_auth)) -> Dict[str, Any]:
+        return run_save_previous_endpoint()
 
     return app
 
@@ -674,6 +811,7 @@ def main() -> None:
     parser.add_argument("--marker-timeout-s", type=float, default=1.0)
     parser.add_argument("--point-cloud-timeout-s", type=float, default=2.0)
     parser.add_argument("--home-pose-file", default=MarkerTaskBridge._default_home_pose_file())
+    parser.add_argument("--previous-pose-file", default=None)
     parser.add_argument("--joint-state-topic", default="/feedback/joint_states")
     parser.add_argument("--joint-state-timeout-s", type=float, default=1.0)
     args, _ros_args = parser.parse_known_args()
@@ -687,6 +825,8 @@ def main() -> None:
         marker_timeout_s=args.marker_timeout_s,
         point_cloud_timeout_s=args.point_cloud_timeout_s,
         home_pose_file=args.home_pose_file,
+        previous_pose_file=args.previous_pose_file
+        or MarkerTaskBridge._default_previous_pose_file(args.home_pose_file),
         joint_state_topic=args.joint_state_topic,
         joint_state_timeout_s=args.joint_state_timeout_s,
     )

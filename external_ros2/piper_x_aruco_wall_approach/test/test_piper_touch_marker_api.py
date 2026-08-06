@@ -57,6 +57,20 @@ class FakeAdapter(api.RosMarkerTaskAdapter):
             "completion_type": "saved_home_pose",
         }
 
+    def go_previous(self, request):
+        self.calls.append(("previous", request))
+        if self.delay_s:
+            time.sleep(self.delay_s)
+        if self.exc:
+            raise self.exc
+        return {
+            "success": True,
+            "stage": "complete",
+            "message": "previous trajectory completed",
+            "contact_confirmed": False,
+            "completion_type": "saved_previous_pose",
+        }
+
     def save_home(self, request):
         self.calls.append(("save-home", request))
         return {
@@ -66,6 +80,19 @@ class FakeAdapter(api.RosMarkerTaskAdapter):
             "contact_confirmed": False,
             "completion_type": "saved_home_pose_update",
             "home_pose_file": "/tmp/piper_x_home_pose.yaml",
+            "joint_names": ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"],
+            "positions_rad": [0.0, 0.1, -0.2, 0.3, 0.4, 0.5],
+        }
+
+    def save_previous(self):
+        self.calls.append(("save-previous", None))
+        return {
+            "success": True,
+            "stage": "complete",
+            "message": "saved current pose as previous",
+            "contact_confirmed": False,
+            "completion_type": "saved_previous_pose_update",
+            "previous_pose_file": "/tmp/piper_x_previous_pose.yaml",
             "joint_names": ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"],
             "positions_rad": [0.0, 0.1, -0.2, 0.3, 0.4, 0.5],
         }
@@ -151,7 +178,7 @@ def test_execution_gate_allows_execute(monkeypatch):
     response = client(adapter).post("/tools/piper/touch-marker", json={"execute": True})
     assert response.status_code == 200
     assert response.json()["contact_confirmed"] is False
-    assert adapter.calls[0][0] == "touch"
+    assert [call[0] for call in adapter.calls] == ["save-previous", "touch"]
 
 
 def test_bearer_token_required():
@@ -195,6 +222,14 @@ def test_successful_mocked_home():
     assert adapter.calls[0][0] == "home"
 
 
+def test_successful_mocked_previous():
+    adapter = FakeAdapter()
+    response = client(adapter).post("/tools/piper/go-previous", json={"execute": False})
+    assert response.status_code == 200
+    assert response.json()["completion_type"] == "saved_previous_pose"
+    assert adapter.calls[0][0] == "previous"
+
+
 def test_successful_mocked_save_home():
     adapter = FakeAdapter()
     response = client(adapter).post("/tools/piper/save-home", json={"pose_name": "home"})
@@ -203,10 +238,26 @@ def test_successful_mocked_save_home():
     assert adapter.calls[0][0] == "save-home"
 
 
+def test_successful_mocked_save_previous():
+    adapter = FakeAdapter()
+    response = client(adapter).post("/tools/piper/save-previous", json={})
+    assert response.status_code == 200
+    assert response.json()["completion_type"] == "saved_previous_pose_update"
+    assert adapter.calls[0][0] == "save-previous"
+
+
 def test_save_home_requires_fresh_joint_state():
     response = client(
         FakeAdapter(health=api.HealthSnapshot(True, True, True, True, True, True, False, 6, 0.10, False))
     ).post("/tools/piper/save-home", json={"pose_name": "home"})
+    assert response.status_code == 503
+    assert response.json()["detail"] == "fresh joint state unavailable"
+
+
+def test_save_previous_requires_fresh_joint_state():
+    response = client(
+        FakeAdapter(health=api.HealthSnapshot(True, True, True, True, True, True, False, 6, 0.10, False))
+    ).post("/tools/piper/save-previous", json={})
     assert response.status_code == 503
     assert response.json()["detail"] == "fresh joint state unavailable"
 
@@ -223,7 +274,30 @@ def test_marker_task_can_return_home_after_execution(monkeypatch):
     assert response.status_code == 200
     body = response.json()
     assert body["return_home_after"]["completion_type"] == "saved_home_pose"
-    assert [call[0] for call in adapter.calls] == ["touch", "home"]
+    assert body["previous_pose_saved_before_motion"]["completion_type"] == "saved_previous_pose_update"
+    assert [call[0] for call in adapter.calls] == ["save-previous", "touch", "home"]
+
+
+def test_execute_marker_task_saves_previous_before_motion(monkeypatch):
+    monkeypatch.setenv("PIPER_TOUCH_ALLOW_EXECUTION", "true")
+    adapter = FakeAdapter(
+        health=api.HealthSnapshot(True, True, True, True, True, True, True, 6, 0.10, True)
+    )
+    response = client(adapter).post("/tools/piper/approach-marker", json={"execute": True})
+    assert response.status_code == 200
+    assert response.json()["previous_pose_saved_before_motion"]["completion_type"] == "saved_previous_pose_update"
+    assert [call[0] for call in adapter.calls] == ["save-previous", "approach"]
+
+
+def test_execute_home_saves_previous_before_motion(monkeypatch):
+    monkeypatch.setenv("PIPER_TOUCH_ALLOW_EXECUTION", "true")
+    adapter = FakeAdapter(
+        health=api.HealthSnapshot(True, True, True, True, True, True, True, 6, 0.10, True)
+    )
+    response = client(adapter).post("/tools/piper/go-home", json={"execute": True})
+    assert response.status_code == 200
+    assert response.json()["previous_pose_saved_before_motion"]["completion_type"] == "saved_previous_pose_update"
+    assert [call[0] for call in adapter.calls] == ["save-previous", "home"]
 
 
 def test_home_execution_gate_blocks_execute(monkeypatch):
@@ -236,12 +310,30 @@ def test_home_execution_gate_blocks_execute(monkeypatch):
     assert "physical execution is disabled" in response.json()["detail"]
 
 
+def test_previous_execution_gate_blocks_execute(monkeypatch):
+    monkeypatch.delenv("PIPER_TOUCH_ALLOW_EXECUTION", raising=False)
+    response = client(FakeAdapter()).post(
+        "/tools/piper/go-previous",
+        json={"execute": True},
+    )
+    assert response.status_code == 403
+    assert "physical execution is disabled" in response.json()["detail"]
+
+
 def test_home_action_unavailable_is_reported():
     response = client(
         FakeAdapter(health=api.HealthSnapshot(True, True, True, True, True, False, True, 6, 0.10, False))
     ).post("/tools/piper/go-home", json={})
     assert response.status_code == 503
     assert response.json()["detail"] == "home trajectory action unavailable"
+
+
+def test_previous_action_unavailable_is_reported():
+    response = client(
+        FakeAdapter(health=api.HealthSnapshot(True, True, True, True, True, False, True, 6, 0.10, False))
+    ).post("/tools/piper/go-previous", json={})
+    assert response.status_code == 503
+    assert response.json()["detail"] == "trajectory action unavailable"
 
 
 def test_ros_task_failure_returns_stage():
