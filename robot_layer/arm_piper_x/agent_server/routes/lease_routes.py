@@ -38,4 +38,3 @@ def create_router(lease_mgr) -> APIRouter:
         return lease_mgr.status()
 
     return router
-

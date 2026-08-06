@@ -64,4 +64,3 @@ class PiperXAgentSdk:
         if not all(math.isfinite(value) for value in values):
             return False, "pose values must be finite"
         return True, "ok"
-

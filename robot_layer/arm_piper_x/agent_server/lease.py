@@ -104,4 +104,3 @@ class LeaseManager:
                 "expires_at": self._current.expires_at,
                 "remaining_s": max(0.0, self._current.expires_at - time.time()),
             }
-
