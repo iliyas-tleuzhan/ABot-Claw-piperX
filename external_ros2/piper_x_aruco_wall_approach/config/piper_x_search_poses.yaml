@@ -1,0 +1,93 @@
+# PiPER-X marker-search configuration.
+#
+# The search component intentionally does not derive these joint targets from
+# the yaw/pitch metadata. Capture the real six-joint values on the physical
+# robot for each viewpoint, then set calibrated: true.
+search_marker_node:
+  ros__parameters:
+    aruco_pose_topic: /aruco_single/pose
+    planning_group: arm
+    marker_id: 6
+    marker_timeout_s: 1.0
+    settle_time_s: 0.5
+    detection_window_frames: 5
+    required_detections: 3
+    velocity_scaling: 0.10
+    acceleration_scaling: 0.10
+    planning_time: 10.0
+    planning_attempts: 10
+    return_to_center_on_failure: true
+    search_center_pose: search_mid_center
+    search_order:
+      - search_mid_center
+      - search_mid_left
+      - search_up_left
+      - search_up_center
+      - search_up_right
+      - search_mid_right
+      - search_down_right
+      - search_down_center
+      - search_down_left
+    local_reacquisition:
+      enabled: true
+      step_deg: 5
+      max_offset_deg: 15
+      pose_suffixes:
+        - yaw_p5
+        - yaw_m5
+        - yaw_p10
+        - yaw_m10
+        - yaw_p15
+        - yaw_m15
+        - pitch_p5
+        - pitch_m5
+        - pitch_p10
+        - pitch_m10
+        - pitch_p15
+        - pitch_m15
+    poses:
+      search_mid_center:
+        calibrated: false
+        camera_yaw_deg: 0
+        camera_pitch_deg: 0
+        joints: []
+      search_mid_left:
+        calibrated: false
+        camera_yaw_deg: -25
+        camera_pitch_deg: 0
+        joints: []
+      search_up_left:
+        calibrated: false
+        camera_yaw_deg: -25
+        camera_pitch_deg: 15
+        joints: []
+      search_up_center:
+        calibrated: false
+        camera_yaw_deg: 0
+        camera_pitch_deg: 15
+        joints: []
+      search_up_right:
+        calibrated: false
+        camera_yaw_deg: 25
+        camera_pitch_deg: 15
+        joints: []
+      search_mid_right:
+        calibrated: false
+        camera_yaw_deg: 25
+        camera_pitch_deg: 0
+        joints: []
+      search_down_right:
+        calibrated: false
+        camera_yaw_deg: 25
+        camera_pitch_deg: -15
+        joints: []
+      search_down_center:
+        calibrated: false
+        camera_yaw_deg: 0
+        camera_pitch_deg: -15
+        joints: []
+      search_down_left:
+        calibrated: false
+        camera_yaw_deg: -25
+        camera_pitch_deg: -15
+        joints: []

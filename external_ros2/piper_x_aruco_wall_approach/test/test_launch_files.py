@@ -25,4 +25,5 @@ def test_touch_marker_full_stack_launch_loads():
     ]
     assert "SetEnvironmentVariable" in entity_types
     assert "wall_approach_node" in node_executables
+    assert "search_marker_node" in node_executables
     assert "piper_touch_marker_api.py" in node_executables

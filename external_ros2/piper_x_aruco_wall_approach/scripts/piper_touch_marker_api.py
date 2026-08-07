@@ -23,7 +23,7 @@ from geometry_msgs.msg import PoseStamped
 from trajectory_msgs.msg import JointTrajectoryPoint
 import uvicorn
 
-from piper_x_aruco_wall_approach.srv import RunMarkerTask
+from piper_x_aruco_wall_approach.srv import RunMarkerTask, SearchMarker
 
 
 def execution_allowed_from_env() -> bool:
@@ -44,6 +44,10 @@ class MarkerTaskRequest(BaseModel):
     final_velocity_scaling: float = Field(default=0.05)
     return_home_after: bool = False
     home_duration_s: float = Field(default=6.0)
+
+
+class SearchMarkerRequest(BaseModel):
+    execute: bool = False
 
 
 class HomeRequest(BaseModel):
@@ -67,6 +71,7 @@ class HealthSnapshot:
     configured_marker_id: int
     configured_marker_size_m: float
     execution_allowed: bool
+    search_marker_service_available: bool = True
     marker_pose_age_s: Optional[float] = None
     point_cloud_age_s: Optional[float] = None
     marker_pose_header_age_s: Optional[float] = None
@@ -78,22 +83,45 @@ class HealthSnapshot:
     joint_state_timeout_s: Optional[float] = None
 
     def as_dict(self) -> Dict[str, Any]:
-        status_value = "ready" if (
+        camera_ready = self.ros_ok and self.point_cloud_available
+        moveit_ready = self.ros_ok and self.moveit_available
+        joint_state_ready = self.ros_ok and self.joint_state_available
+        marker_visible = self.marker_pose_available
+        system_ready = (
             self.ros_ok
-            and self.marker_pose_available
-            and self.point_cloud_available
             and self.moveit_available
             and self.marker_task_service_available
+            and self.search_marker_service_available
             and self.home_action_available
             and self.joint_state_available
-        ) else "not_ready"
+            and self.point_cloud_available
+        )
+        ready_for_search = (
+            self.ros_ok
+            and self.moveit_available
+            and self.search_marker_service_available
+            and self.joint_state_available
+        )
+        ready_for_approach = (
+            system_ready
+            and marker_visible
+        )
+        status_value = "ready" if system_ready else "not_ready"
         return {
             "status": status_value,
+            "system_ready": system_ready,
+            "camera_ready": camera_ready,
+            "moveit_ready": moveit_ready,
+            "joint_state_ready": joint_state_ready,
+            "marker_visible": marker_visible,
+            "ready_for_search": ready_for_search,
+            "ready_for_approach": ready_for_approach,
             "ros_ok": self.ros_ok,
             "marker_pose_available": self.marker_pose_available,
             "point_cloud_available": self.point_cloud_available,
             "moveit_available": self.moveit_available,
             "marker_task_service_available": self.marker_task_service_available,
+            "search_marker_service_available": self.search_marker_service_available,
             "home_action_available": self.home_action_available,
             "joint_state_available": self.joint_state_available,
             "configured_marker_id": self.configured_marker_id,
@@ -116,6 +144,9 @@ class RosMarkerTaskAdapter:
         raise NotImplementedError
 
     def run_task(self, mode: str, request: MarkerTaskRequest) -> Dict[str, Any]:
+        raise NotImplementedError
+
+    def search_marker(self, request: SearchMarkerRequest) -> Dict[str, Any]:
         raise NotImplementedError
 
     def go_home(self, request: HomeRequest) -> Dict[str, Any]:
@@ -170,6 +201,7 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         self._latest_joint_state: Optional[JointState] = None
         self._lock = threading.Lock()
         self._client = self.create_client(RunMarkerTask, "/run_marker_task")
+        self._search_client = self.create_client(SearchMarker, "/search_marker")
         self._home_client = ActionClient(
             self,
             FollowJointTrajectory,
@@ -303,6 +335,7 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
             point_cloud_available=cloud_fresh,
             moveit_available=moveit_available,
             marker_task_service_available=self._client.service_is_ready(),
+            search_marker_service_available=self._search_client.service_is_ready(),
             home_action_available=home_action_available,
             joint_state_available=joint_state_fresh,
             configured_marker_id=self.marker_id,
@@ -347,6 +380,31 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
             "message": str(response.message),
             "contact_confirmed": bool(response.contact_confirmed),
             "completion_type": str(response.completion_type),
+        }
+
+    def search_marker(self, request: SearchMarkerRequest) -> Dict[str, Any]:
+        if not self._search_client.wait_for_service(timeout_sec=1.0):
+            raise RuntimeError("ROS service /search_marker is not available")
+
+        service_request = SearchMarker.Request()
+        service_request.execute = request.execute
+        future = self._search_client.call_async(service_request)
+        deadline = time.monotonic() + 180.0
+        while rclpy.ok() and not future.done() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if not future.done():
+            raise TimeoutError("timed out waiting for /search_marker response")
+        response = future.result()
+        if response is None:
+            raise RuntimeError("ROS service /search_marker returned no response")
+        return {
+            "success": bool(response.success),
+            "marker_found": bool(response.marker_found),
+            "marker_id": int(response.marker_id),
+            "found_at_pose": str(response.found_at_pose),
+            "poses_checked": int(response.poses_checked),
+            "stage": str(response.stage),
+            "message": str(response.message),
         }
 
     def _execute_saved_joint_pose(
@@ -530,9 +588,12 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
 
 class FakeUnavailableAdapter(RosMarkerTaskAdapter):
     def health(self) -> HealthSnapshot:
-        return HealthSnapshot(False, False, False, False, False, False, False, 6, 0.03, execution_allowed_from_env())
+        return HealthSnapshot(False, False, False, False, False, False, False, 6, 0.03, execution_allowed_from_env(), False)
 
     def run_task(self, mode: str, request: MarkerTaskRequest) -> Dict[str, Any]:
+        raise RuntimeError("ROS adapter not initialized")
+
+    def search_marker(self, request: SearchMarkerRequest) -> Dict[str, Any]:
         raise RuntimeError("ROS adapter not initialized")
 
     def go_home(self, request: HomeRequest) -> Dict[str, Any]:
@@ -585,6 +646,26 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
                 detail="duration_s must be finite and in (0.0, 30.0]",
             )
 
+    def require_search_readiness(health_snapshot: HealthSnapshot) -> None:
+        if not health_snapshot.search_marker_service_available:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="marker search service unavailable")
+        if not health_snapshot.moveit_available:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="MoveIt is unavailable")
+        if not health_snapshot.joint_state_available:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="fresh joint state unavailable")
+
+    def require_approach_readiness(health_snapshot: HealthSnapshot) -> None:
+        if not health_snapshot.marker_task_service_available:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="marker task service unavailable")
+        if not health_snapshot.marker_pose_available:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="ArUco marker pose unavailable")
+        if not health_snapshot.point_cloud_available:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="RealSense point cloud unavailable")
+        if not health_snapshot.moveit_available:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="MoveIt is unavailable")
+        if not health_snapshot.joint_state_available:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="fresh joint state unavailable")
+
     def require_auth(request: Request, authorization: Optional[str] = Header(default=None)) -> None:
         if api_token is None:
             if request.client and request.client.host in {"127.0.0.1", "::1", "localhost", "testclient"}:
@@ -609,24 +690,34 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="physical execution is disabled; set PIPER_TOUCH_ALLOW_EXECUTION=1",
             )
-        if not health_snapshot.marker_task_service_available:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="marker task service unavailable")
-        if not health_snapshot.marker_pose_available:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="ArUco marker pose unavailable")
-        if not health_snapshot.point_cloud_available:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="RealSense point cloud unavailable")
-        if not health_snapshot.moveit_available:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="MoveIt is unavailable")
-        if request.execute and request.return_home_after and not health_snapshot.home_action_available:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="home trajectory action unavailable",
-            )
         if not command_lock.acquire(blocking=False):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="another PiPER marker task is active")
         try:
+            search_result = None
+            if not health_snapshot.marker_pose_available:
+                require_search_readiness(health_snapshot)
+                search_result = adapter.search_marker(SearchMarkerRequest(execute=request.execute))
+                if not search_result.get("marker_found", False):
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail={
+                            "success": False,
+                            "stage": "marker_not_found",
+                            "message": "marker_not_found",
+                            "search": search_result,
+                        },
+                    )
+                health_snapshot = adapter.health()
+            require_approach_readiness(health_snapshot)
+            if request.execute and request.return_home_after and not health_snapshot.home_action_available:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="home trajectory action unavailable",
+                )
             previous_saved = adapter.save_previous() if request.execute else None
             result = adapter.run_task(mode, request)
+            if search_result is not None and "search_result" not in result:
+                result["search_result"] = search_result
             if previous_saved is not None:
                 result["previous_pose_saved_before_motion"] = previous_saved
             if result.get("success", False) and request.execute and request.return_home_after:
@@ -642,6 +733,32 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
                         "marker_task": result,
                         "return_home_after": home_result,
                     }
+        except HTTPException:
+            raise
+        except TimeoutError as exc:
+            raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+        finally:
+            command_lock.release()
+        if not result.get("success", False):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=result)
+        return result
+
+    def run_search_endpoint(request: SearchMarkerRequest) -> Dict[str, Any]:
+        health_snapshot = adapter.health()
+        if request.execute and not health_snapshot.execution_allowed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="physical execution is disabled; set PIPER_TOUCH_ALLOW_EXECUTION=1",
+            )
+        require_search_readiness(health_snapshot)
+        if not command_lock.acquire(blocking=False):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="another PiPER marker task is active")
+        try:
+            result = adapter.search_marker(request)
+        except HTTPException:
+            raise
         except TimeoutError as exc:
             raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail=str(exc)) from exc
         except Exception as exc:
@@ -756,6 +873,13 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
         _: None = Depends(require_auth),
     ) -> Dict[str, Any]:
         return run_endpoint("touch", request)
+
+    @app.post("/tools/piper/search-marker")
+    def search_marker(
+        request: SearchMarkerRequest,
+        _: None = Depends(require_auth),
+    ) -> Dict[str, Any]:
+        return run_search_endpoint(request)
 
     @app.post("/tools/piper/go-home")
     def go_home(

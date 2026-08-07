@@ -28,9 +28,13 @@ curl -sS http://127.0.0.1:8893/health
 Physical execution requires `execution_allowed: true` and a lease from
 `POST /lease/acquire`.
 
+Health separates marker visibility from system readiness. A hidden marker can
+still be searchable when `system_ready: true`, `ready_for_search: true`,
+`marker_visible: false`, and `ready_for_approach: false`.
+
 For `touch` and `approach`, also require:
 
-- `marker_pose_available: true`
+- `ready_for_search: true`
 - `point_cloud_available: true`
 - `moveit_available: true`
 - `marker_task_service_available: true`
@@ -68,6 +72,11 @@ curl -sS -X POST http://127.0.0.1:8893/tools/approach-marker \
   -H 'Content-Type: application/json' \
   -d '{"execute":true,"lease_id":"<LEASE_ID>","pre_clearance_m":0.05,"final_clearance_m":0.005,"retract_after":false,"retract_distance_m":0.05,"final_velocity_scaling":0.05,"return_home_after":false,"home_duration_s":6.0}'
 ```
+
+If marker `6` is not currently visible, `approach-marker` automatically runs the
+PiPER-X 3x3 wrist-camera search before handing control to the existing
+wall-plane approach pipeline. OpenClaw should not manually command individual
+look-left/look-up/look-right motions.
 
 Touch marker directly:
 

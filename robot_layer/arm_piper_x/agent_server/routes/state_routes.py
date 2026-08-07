@@ -13,17 +13,37 @@ def create_router(cfg, state_monitor, sdk, lease_mgr) -> APIRouter:
         marker_health = sdk.health()
         state = state_monitor.state()
         graph = state_monitor.graph()
-        marker_api_ready = marker_health.get("status") == "ready"
+        marker_visible = bool(marker_health.get("marker_visible", marker_health.get("marker_pose_available", False)))
+        system_ready = bool(marker_health.get("system_ready", marker_health.get("status") == "ready"))
+        ready_for_search = bool(marker_health.get("ready_for_search", False))
+        ready_for_approach = bool(marker_health.get("ready_for_approach", False))
+        agent_joint_ready = bool(state.get("joint_state_fresh"))
+        agent_tcp_ready = bool(state.get("tcp_pose_fresh"))
+        agent_moveit_ready = bool(graph.get("trajectory_action_available"))
+        agent_marker_task_seen = bool(graph.get("marker_task_service_seen"))
         return {
             "status": "ready"
             if (
-                marker_api_ready
-                and state.get("joint_state_fresh")
-                and state.get("tcp_pose_fresh")
-                and graph.get("trajectory_action_available")
-                and graph.get("marker_task_service_seen")
+                system_ready
+                and agent_joint_ready
+                and agent_tcp_ready
+                and agent_moveit_ready
+                and agent_marker_task_seen
             )
             else "not_ready",
+            "system_ready": (
+                system_ready
+                and agent_joint_ready
+                and agent_tcp_ready
+                and agent_moveit_ready
+                and agent_marker_task_seen
+            ),
+            "camera_ready": bool(marker_health.get("camera_ready", marker_health.get("point_cloud_available", False))),
+            "moveit_ready": bool(marker_health.get("moveit_ready", marker_health.get("moveit_available", False))) and agent_moveit_ready,
+            "joint_state_ready": bool(marker_health.get("joint_state_ready", marker_health.get("joint_state_available", False))) and agent_joint_ready,
+            "marker_visible": marker_visible,
+            "ready_for_search": ready_for_search and agent_joint_ready and agent_moveit_ready,
+            "ready_for_approach": ready_for_approach and agent_joint_ready and agent_tcp_ready and agent_moveit_ready,
             "agent": "piper_x_agent_server",
             "port": cfg.port,
             "execution_allowed": cfg.execution_allowed,

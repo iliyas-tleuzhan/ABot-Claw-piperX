@@ -19,7 +19,7 @@ SPEC.loader.exec_module(api)
 
 
 class FakeAdapter(api.RosMarkerTaskAdapter):
-    def __init__(self, health=None, result=None, delay_s=0.0, exc=None):
+    def __init__(self, health=None, result=None, search_result=None, delay_s=0.0, exc=None):
         self._health = health or api.HealthSnapshot(True, True, True, True, True, True, True, 6, 0.03, False)
         self._result = result or {
             "success": True,
@@ -27,6 +27,15 @@ class FakeAdapter(api.RosMarkerTaskAdapter):
             "message": "ok",
             "contact_confirmed": False,
             "completion_type": "single_moveit_marker_touch",
+        }
+        self._search_result = search_result or {
+            "success": True,
+            "marker_found": True,
+            "marker_id": 6,
+            "found_at_pose": "search_mid_center",
+            "poses_checked": 1,
+            "stage": "complete",
+            "message": "marker acquired",
         }
         self.delay_s = delay_s
         self.exc = exc
@@ -42,6 +51,17 @@ class FakeAdapter(api.RosMarkerTaskAdapter):
         if self.exc:
             raise self.exc
         return dict(self._result)
+
+    def search_marker(self, request):
+        self.calls.append(("search", request))
+        if self.delay_s:
+            time.sleep(self.delay_s)
+        if self.exc:
+            raise self.exc
+        result = dict(self._search_result)
+        if result.get("marker_found", False):
+            self._health.marker_pose_available = True
+        return result
 
     def go_home(self, request):
         self.calls.append(("home", request))
@@ -133,7 +153,7 @@ def test_health_endpoint_reports_state(monkeypatch):
     assert body["marker_timeout_s"] == 1.0
 
 
-def test_health_endpoint_reports_stale_marker_not_ready():
+def test_health_endpoint_reports_stale_marker_ready_for_search():
     adapter = FakeAdapter(
         health=api.HealthSnapshot(
             True,
@@ -155,7 +175,11 @@ def test_health_endpoint_reports_stale_marker_not_ready():
     response = client(adapter).get("/health")
     assert response.status_code == 200
     body = response.json()
-    assert body["status"] == "not_ready"
+    assert body["status"] == "ready"
+    assert body["system_ready"] is True
+    assert body["ready_for_search"] is True
+    assert body["ready_for_approach"] is False
+    assert body["marker_visible"] is False
     assert body["marker_pose_available"] is False
     assert body["marker_pose_age_s"] == 5.0
 
@@ -194,7 +218,6 @@ def test_bearer_token_required():
 @pytest.mark.parametrize(
     "health,expected_detail",
     [
-        (api.HealthSnapshot(True, False, True, True, True, True, True, 6, 0.10, False), "ArUco marker pose unavailable"),
         (api.HealthSnapshot(True, True, False, True, True, True, True, 6, 0.10, False), "RealSense point cloud unavailable"),
         (api.HealthSnapshot(True, True, True, False, True, True, True, 6, 0.10, False), "MoveIt is unavailable"),
         (api.HealthSnapshot(True, True, True, True, False, True, True, 6, 0.10, False), "marker task service unavailable"),
@@ -204,6 +227,43 @@ def test_readiness_failures_are_reported(health, expected_detail):
     response = client(FakeAdapter(health=health)).post("/tools/piper/approach-marker", json={})
     assert response.status_code == 503
     assert response.json()["detail"] == expected_detail
+
+
+def test_search_marker_endpoint_proxies_search():
+    adapter = FakeAdapter()
+    response = client(adapter).post("/tools/piper/search-marker", json={"execute": False})
+    assert response.status_code == 200
+    assert response.json()["marker_found"] is True
+    assert [call[0] for call in adapter.calls] == ["search"]
+
+
+def test_marker_absence_triggers_search_before_approach():
+    adapter = FakeAdapter(
+        health=api.HealthSnapshot(True, False, True, True, True, True, True, 6, 0.03, False)
+    )
+    response = client(adapter).post("/tools/piper/approach-marker", json={})
+    assert response.status_code == 200
+    assert response.json()["search_result"]["found_at_pose"] == "search_mid_center"
+    assert [call[0] for call in adapter.calls] == ["search", "approach"]
+
+
+def test_marker_absence_returns_marker_not_found_when_search_fails():
+    adapter = FakeAdapter(
+        health=api.HealthSnapshot(True, False, True, True, True, True, True, 6, 0.03, False),
+        search_result={
+            "success": False,
+            "marker_found": False,
+            "marker_id": 6,
+            "found_at_pose": "",
+            "poses_checked": 9,
+            "stage": "search_complete",
+            "message": "marker_not_found",
+        },
+    )
+    response = client(adapter).post("/tools/piper/approach-marker", json={})
+    assert response.status_code == 422
+    assert response.json()["detail"]["stage"] == "marker_not_found"
+    assert response.json()["detail"]["search"]["poses_checked"] == 9
 
 
 def test_successful_mocked_approach_and_touch():

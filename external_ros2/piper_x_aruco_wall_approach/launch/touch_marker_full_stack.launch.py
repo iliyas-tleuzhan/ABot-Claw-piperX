@@ -26,6 +26,7 @@ def generate_launch_description():
     auto_control_gate = LaunchConfiguration("auto_control_gate")
     enable_color = LaunchConfiguration("enable_color")
     enable_depth = LaunchConfiguration("enable_depth")
+    color_profile = LaunchConfiguration("color_profile")
     align_depth = LaunchConfiguration("align_depth")
     pointcloud = LaunchConfiguration("pointcloud")
     marker_timeout = LaunchConfiguration("marker_timeout")
@@ -63,6 +64,9 @@ def generate_launch_description():
         DeclareLaunchArgument("auto_control_gate", default_value="false"),
         DeclareLaunchArgument("enable_color", default_value="true"),
         DeclareLaunchArgument("enable_depth", default_value="true"),
+        DeclareLaunchArgument("color_width", default_value="1280"),
+        DeclareLaunchArgument("color_height", default_value="720"),
+        DeclareLaunchArgument("color_profile", default_value="1280x720x30"),
         DeclareLaunchArgument("align_depth", default_value="true"),
         DeclareLaunchArgument("pointcloud", default_value="true"),
         DeclareLaunchArgument("marker_timeout", default_value="1.0"),
@@ -117,6 +121,7 @@ def generate_launch_description():
             launch_arguments={
                 "enable_color": enable_color,
                 "enable_depth": enable_depth,
+                "rgb_camera.color_profile": color_profile,
                 "align_depth.enable": align_depth,
                 "pointcloud.enable": pointcloud,
             }.items(),
@@ -173,6 +178,19 @@ def generate_launch_description():
                         value_type=float,
                     ),
                     "point_cloud_topic": point_cloud_topic,
+                },
+            ],
+        ),
+        Node(
+            package="piper_x_aruco_wall_approach",
+            executable="search_marker_node",
+            name="search_marker_node",
+            output="screen",
+            parameters=[
+                PathJoinSubstitution([package_share, "config", "piper_x_search_poses.yaml"]),
+                {
+                    "aruco_pose_topic": "/aruco_single/pose",
+                    "marker_id": ParameterValue(marker_id, value_type=int),
                 },
             ],
         ),

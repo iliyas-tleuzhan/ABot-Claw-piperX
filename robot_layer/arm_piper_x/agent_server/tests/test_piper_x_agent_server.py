@@ -18,9 +18,17 @@ class FakeSdk:
             "status": "ready",
             "ros_ok": True,
             "marker_pose_available": True,
+            "marker_visible": True,
             "point_cloud_available": True,
             "moveit_available": True,
+            "system_ready": True,
+            "camera_ready": True,
+            "moveit_ready": True,
+            "joint_state_ready": True,
+            "ready_for_search": True,
+            "ready_for_approach": True,
             "marker_task_service_available": True,
+            "search_marker_service_available": True,
             "home_action_available": True,
             "joint_state_available": True,
             "execution_allowed": True,
@@ -38,6 +46,18 @@ class FakeSdk:
             "message": "touch ok",
             "contact_confirmed": False,
             "completion_type": "geometric_surface_approach",
+        }
+
+    def search_marker(self, payload):
+        self.calls.append(("search", payload))
+        return 200, {
+            "success": True,
+            "marker_found": True,
+            "marker_id": 6,
+            "found_at_pose": "search_mid_center",
+            "poses_checked": 1,
+            "stage": "complete",
+            "message": "marker acquired",
         }
 
     def go_home(self, payload):
@@ -119,10 +139,17 @@ class PiperXAgentServerTest(unittest.TestCase):
         self.assertEqual(result.status_code, 200)
         self.assertEqual(result.json()["agent"], "piper_x_agent_server")
 
-    def test_health_not_ready_when_marker_api_is_not_ready(self):
+    def test_health_ready_for_search_when_marker_is_not_visible(self):
         client, sdk, _env, _state = make_client()
         sdk.health = lambda: {
-            "status": "not_ready",
+            "status": "ready",
+            "system_ready": True,
+            "camera_ready": True,
+            "moveit_ready": True,
+            "joint_state_ready": True,
+            "marker_visible": False,
+            "ready_for_search": True,
+            "ready_for_approach": False,
             "ros_ok": True,
             "marker_pose_available": False,
             "point_cloud_available": True,
@@ -135,7 +162,10 @@ class PiperXAgentServerTest(unittest.TestCase):
         }
         result = client.get("/health")
         self.assertEqual(result.status_code, 200)
-        self.assertEqual(result.json()["status"], "not_ready")
+        self.assertEqual(result.json()["status"], "ready")
+        self.assertTrue(result.json()["ready_for_search"])
+        self.assertFalse(result.json()["ready_for_approach"])
+        self.assertFalse(result.json()["marker_visible"])
         self.assertFalse(result.json()["marker_api_health"]["marker_pose_available"])
 
     def test_plan_only_approach_does_not_require_lease(self):
@@ -169,6 +199,30 @@ class PiperXAgentServerTest(unittest.TestCase):
         self.assertEqual(result.status_code, 200)
         self.assertEqual(sdk.calls[0][0], "touch")
         self.assertEqual(sdk.calls[0][1]["lease_id"] if "lease_id" in sdk.calls[0][1] else None, None)
+
+    def test_plan_only_search_marker_does_not_require_lease(self):
+        client, sdk, _env, _state = make_client()
+        result = client.post("/tools/search-marker", json={"execute": False})
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.json()["found_at_pose"], "search_mid_center")
+        self.assertEqual(sdk.calls[0][0], "search")
+        self.assertFalse(sdk.calls[0][1]["execute"])
+
+    def test_search_marker_execute_requires_lease_when_gate_enabled(self):
+        client, _sdk, _env, _state = make_client(execution_allowed=True)
+        with patch.dict(os.environ, {"PIPER_X_AGENT_ALLOW_EXECUTION": "1"}):
+            result = client.post("/tools/search-marker", json={"execute": True})
+        self.assertEqual(result.status_code, 409)
+        self.assertEqual(result.json()["detail"]["stage"], "lease")
+
+    def test_search_marker_execute_with_lease_proxies(self):
+        client, sdk, _env, _state = make_client(execution_allowed=True)
+        with patch.dict(os.environ, {"PIPER_X_AGENT_ALLOW_EXECUTION": "1"}):
+            lease = client.post("/lease/acquire", json={"holder": "test"}).json()["lease_id"]
+            result = client.post("/tools/search-marker", json={"execute": True, "lease_id": lease})
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(sdk.calls[0][0], "search")
+        self.assertNotIn("lease_id", sdk.calls[0][1])
 
     def test_save_home_proxies_without_execution_lease(self):
         client, sdk, _env, _state = make_client()

@@ -21,6 +21,7 @@ find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/RunMarkerTask.srv"
+  "srv/SearchMarker.srv"
 )
 
 ament_export_dependencies(rosidl_default_runtime)
@@ -47,7 +48,17 @@ ament_target_dependencies(wall_approach_node
 rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
 target_link_libraries(wall_approach_node "${cpp_typesupport_target}")
 
-install(TARGETS wall_approach_node DESTINATION lib/${PROJECT_NAME})
+add_executable(search_marker_node src/search_marker_node.cpp)
+target_compile_features(search_marker_node PUBLIC cxx_std_17)
+target_link_libraries(search_marker_node Eigen3::Eigen)
+ament_target_dependencies(search_marker_node
+  geometry_msgs
+  moveit_ros_planning_interface
+  rclcpp
+)
+target_link_libraries(search_marker_node "${cpp_typesupport_target}")
+
+install(TARGETS wall_approach_node search_marker_node DESTINATION lib/${PROJECT_NAME})
 install(PROGRAMS
   scripts/piper_touch_marker_api.py
   scripts/piper_touch_marker_client.py

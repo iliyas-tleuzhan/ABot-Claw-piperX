@@ -21,6 +21,11 @@ class MarkerTaskRequest(BaseModel):
     home_duration_s: float = Field(default=6.0)
 
 
+class SearchMarkerRequest(BaseModel):
+    execute: bool = False
+    lease_id: Optional[str] = None
+
+
 class HomeRequest(BaseModel):
     execute: bool = False
     lease_id: Optional[str] = None
@@ -163,6 +168,15 @@ def create_router(cfg, sdk, lease_mgr, state_monitor) -> APIRouter:
     @router.post("/touch-marker")
     def touch_marker(req: MarkerTaskRequest):
         return proxy_marker_task("touch-marker", req)
+
+    @router.post("/search-marker")
+    def search_marker(req: SearchMarkerRequest):
+        require_execution_allowed(req.execute, req.lease_id)
+        status_code, result = sdk.search_marker(req.model_dump(exclude={"lease_id"}))
+        normalized = _normalize_marker_api_response(status_code, result)
+        if not normalized.get("success", False):
+            raise HTTPException(status_code=422 if status_code < 400 else status_code, detail=normalized)
+        return normalized
 
     @router.post("/go-home")
     def go_home(req: HomeRequest):

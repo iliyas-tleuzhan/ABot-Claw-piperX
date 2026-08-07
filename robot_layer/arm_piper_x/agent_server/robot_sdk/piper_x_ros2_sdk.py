@@ -46,6 +46,9 @@ class PiperXAgentSdk:
     def touch_marker(self, payload: dict) -> tuple[int, dict]:
         return self._request("POST", "/tools/piper/touch-marker", payload)
 
+    def search_marker(self, payload: dict) -> tuple[int, dict]:
+        return self._request("POST", "/tools/piper/search-marker", payload)
+
     def go_home(self, payload: dict) -> tuple[int, dict]:
         return self._request("POST", "/tools/piper/go-home", payload)
 

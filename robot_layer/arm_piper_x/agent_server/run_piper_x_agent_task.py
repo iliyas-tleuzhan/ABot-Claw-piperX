@@ -76,6 +76,7 @@ def command_needs_lease(args: argparse.Namespace) -> bool:
     return bool(getattr(args, "execute", False)) and args.command in {
         "approach",
         "touch",
+        "search",
         "home",
         "previous",
         "open-gripper",
@@ -107,6 +108,11 @@ def main() -> int:
         task.add_argument("--final-velocity-scaling", type=float, default=0.05)
         task.add_argument("--return-home-after", action="store_true")
         task.add_argument("--home-duration", type=float, default=6.0)
+
+    search = subparsers.add_parser("search")
+    search.add_argument("--execute", action="store_true")
+    search.add_argument("--plan-only", action="store_true")
+    search.add_argument("--lease-id")
 
     home = subparsers.add_parser("home")
     home.add_argument("--execute", action="store_true")
@@ -186,6 +192,14 @@ def main() -> int:
                 "effort_n": args.effort_n,
             }
             return print_result(*request_json("POST", f"{base_url}/tools/{args.command}", payload))
+        if args.command == "search":
+            return print_result(
+                *request_json(
+                    "POST",
+                    f"{base_url}/tools/search-marker",
+                    {"execute": args.execute, "lease_id": args.lease_id},
+                )
+            )
         endpoint = "approach-marker" if args.command == "approach" else "touch-marker"
         return print_result(*request_json("POST", f"{base_url}/tools/{endpoint}", marker_payload(args)))
     finally:

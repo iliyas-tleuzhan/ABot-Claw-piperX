@@ -81,6 +81,9 @@ def main():
         task.add_argument("--return-home-after", action="store_true")
         task.add_argument("--home-duration", type=float, default=6.0)
 
+    search = subparsers.add_parser("search")
+    search.add_argument("--execute", action="store_true")
+
     home = subparsers.add_parser("home")
     home.add_argument("--execute", action="store_true")
     home.add_argument("--duration", type=float, default=6.0)
@@ -130,6 +133,15 @@ def main():
                 "POST",
                 f"{base_url}/tools/piper/save-previous",
                 payload={},
+                token=args.token,
+            )
+        )
+    if args.command == "search":
+        return print_result(
+            *request_json(
+                "POST",
+                f"{base_url}/tools/piper/search-marker",
+                payload={"execute": args.execute},
                 token=args.token,
             )
         )

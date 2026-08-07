@@ -96,6 +96,9 @@ Health:
 curl -s http://127.0.0.1:8892/health | python3 -m json.tool
 ```
 
+Health separates system readiness from marker visibility. When marker `6` is
+outside the camera view, a healthy stack should report `system_ready=true`,
+`ready_for_search=true`, `marker_visible=false`, and `ready_for_approach=false`.
 `marker_pose_available` and `point_cloud_available` mean fresh data, not just
 "seen once." By default the API requires a marker pose received within `1.0 s`
 and a point cloud received within `2.0 s`. The response includes
@@ -148,10 +151,39 @@ The launch starts:
 - RealSense color, aligned depth, and point cloud
 - packaged hand-eye TF publisher
 - `aruco_ros` marker detector
+- `search_marker_node`
 - `wall_approach_node`
 - HTTP API bridge
 
 It must not be run together with another PiPER-X driver on `can0`.
+
+## Marker Search
+
+`approach-marker` and `touch-marker` check the current camera view first. If
+marker `6` is not visible, the `8892` bridge calls `/search_marker`, waits for
+the marker to be acquired, then runs the existing wall-plane and MoveIt
+approach/touch pipeline unchanged.
+
+Direct search debug:
+
+```bash
+ros2 run piper_x_aruco_wall_approach piper_touch_marker_client.py search --execute
+```
+
+Search parameters live in `config/piper_x_search_poses.yaml`:
+
+- 3x3 view order starts at `search_mid_center`
+- horizontal metadata: `-25`, `0`, `+25` degrees
+- vertical metadata: `+15`, `0`, `-15` degrees
+- `settle_time_s: 0.5`
+- `detection_window_frames: 5`
+- `required_detections: 3`
+- local reacquisition suffixes cover `+/-5`, `+/-10`, `+/-15` degree yaw/pitch corrections
+
+The yaw/pitch values are metadata for the operator. Capture the actual six
+PiPER-X joint positions on the physical robot for each search pose, then set
+that pose's `calibrated` flag to `true`. Uncalibrated poses fail closed instead
+of commanding guessed joint targets.
 
 ## Operator Client
 
