@@ -9,7 +9,7 @@
 #include <vector>
 
 #include <geometry_msgs/msg/pose_stamped.hpp>
-#include <moveit/move_group_interface/move_group_interface.hpp>
+#include <moveit/move_group_interface/move_group_interface.h>
 #include <rclcpp/rclcpp.hpp>
 
 #include "piper_x_aruco_wall_approach/srv/search_marker.hpp"
