@@ -36,7 +36,8 @@ talk directly to CAN or expose arbitrary joint commands.
 - end effector: AgileX parallel gripper
 - effector launch argument: `effector_type:=agx_gripper`
 - firmware launch argument: `fw_version:=v189`
-- CAN interface: `can0`, 1 Mbps, configured before ROS launch
+- CAN interface: `can2`, 1 Mbps, configured before ROS launch. Override with
+  `can_port:=can0` if the arm is temporarily wired to `can0`.
 - MoveIt planning group: `arm`
 - MoveIt TCP/tip link: `tcp_link`
 - TCP offset: `[0.0, 0.0, 0.1425, 0.0, 0.0, 0.0]`

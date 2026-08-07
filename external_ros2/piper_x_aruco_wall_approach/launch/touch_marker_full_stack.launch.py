@@ -58,7 +58,7 @@ def generate_launch_description():
         DeclareLaunchArgument("prefer_elbow_motion", default_value="true"),
         DeclareLaunchArgument("goal_orientation_tolerance", default_value="0.35"),
         DeclareLaunchArgument("use_rviz", default_value="false"),
-        DeclareLaunchArgument("can_port", default_value="can0"),
+        DeclareLaunchArgument("can_port", default_value="can2"),
         DeclareLaunchArgument("auto_enable", default_value="false"),
         DeclareLaunchArgument("follow", default_value="true"),
         DeclareLaunchArgument("auto_control_gate", default_value="false"),

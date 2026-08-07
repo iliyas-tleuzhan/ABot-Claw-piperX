@@ -9,7 +9,7 @@ source_type: sensor_msgs/msg/JointState
 arm:
   arm_type: piper_x
   effector_type: agx_gripper
-  can_port: can0
+  can_port: can2
 moveit:
   planning_group: arm
   tip_link: tcp_link

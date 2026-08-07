@@ -5,7 +5,7 @@ robot:
   arm_type: piper_x
   effector_type: agx_gripper
   firmware_argument: v189
-  can_interface: can0
+  can_interface: can2
   can_bitrate: 1000000
 ros2:
   distro: jazzy

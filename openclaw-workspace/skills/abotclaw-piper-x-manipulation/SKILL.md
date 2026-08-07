@@ -15,7 +15,8 @@ workcell stack.
 - Arm launch argument: `arm_type:=piper_x`
 - End effector: `effector_type:=agx_gripper`
 - Firmware argument: `fw_version:=v189`
-- CAN: `can0` at 1 Mbps
+- CAN: default `can2` at 1 Mbps. Use the ROS launch `can_port:=can0` override
+  only when the PiPER-X arm is temporarily wired to `can0`.
 - MoveIt group: `arm`
 - MoveIt tip/TCP: `tcp_link`
 - TCP offset: `[0.0, 0.0, 0.1425, 0.0, 0.0, 0.0]`

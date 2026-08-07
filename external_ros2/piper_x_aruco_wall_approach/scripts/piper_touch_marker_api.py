@@ -535,7 +535,7 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
             "arm": {
                 "arm_type": "piper_x",
                 "effector_type": "agx_gripper",
-                "can_port": "can0",
+                "can_port": "can2",
             },
             "moveit": {
                 "planning_group": "arm",

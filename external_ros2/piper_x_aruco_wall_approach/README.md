@@ -73,7 +73,9 @@ cd ~/ABot-Claw-piper-publish
 
 The installer enables the user service but does not start it. It does not configure CAN.
 
-`can0` must already be configured and UP before starting the stack.
+`can2` must already be configured and UP before starting the stack. If the arm
+is temporarily wired to another interface, override the launch with
+`can_port:=can0` or another explicit CAN device.
 
 ## Managed Startup
 
@@ -136,6 +138,7 @@ source ~/ros2_ws/install/setup.bash
 ros2 launch piper_x_aruco_wall_approach touch_marker_full_stack.launch.py \
   execute_allowed:=false \
   calibration_file:=/home/dase-hw101/handeye/config/piper_x_d435i_eye_in_hand.json \
+  can_port:=can2 \
   point_cloud_topic:=/camera/camera/depth/color/points \
   marker_id:=6 \
   marker_size:=0.03 \
@@ -155,7 +158,8 @@ The launch starts:
 - `wall_approach_node`
 - HTTP API bridge
 
-It must not be run together with another PiPER-X driver on `can0`.
+It must not be run together with another PiPER-X driver on the selected CAN
+interface. The default is `can2`; use `can_port:=can0` to override when needed.
 
 ## Marker Search
 
