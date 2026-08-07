@@ -19,6 +19,9 @@ wall_approach_node:
     velocity_scaling: 0.10
     acceleration_scaling: 0.10
     planning_time: 10.0
+    planning_attempts: 10
+    goal_position_tolerance: 0.01
+    goal_orientation_tolerance: 0.35
 
     tool_roll: 0.0
     execute: false
@@ -27,3 +30,10 @@ wall_approach_node:
     final_velocity_scaling: 0.05
     retract_after: true
     max_final_travel: 0.06
+    prefer_elbow_motion: true
+    joint1_name: joint1
+    joint1_planning_tolerances_rad:
+      - 0.03
+      - 0.06
+      - 0.10
+      - 0.15

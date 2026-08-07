@@ -530,7 +530,7 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
 
 class FakeUnavailableAdapter(RosMarkerTaskAdapter):
     def health(self) -> HealthSnapshot:
-        return HealthSnapshot(False, False, False, False, False, False, False, 6, 0.10, execution_allowed_from_env())
+        return HealthSnapshot(False, False, False, False, False, False, False, 6, 0.03, execution_allowed_from_env())
 
     def run_task(self, mode: str, request: MarkerTaskRequest) -> Dict[str, Any]:
         raise RuntimeError("ROS adapter not initialized")
@@ -555,7 +555,7 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
     def validate_request(mode: str, request: MarkerTaskRequest) -> None:
         if mode not in {"approach", "touch"}:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"unsupported mode: {mode}")
-        if not math.isfinite(request.pre_clearance_m) or request.pre_clearance_m < 0.0:
+        if mode == "approach" and (not math.isfinite(request.pre_clearance_m) or request.pre_clearance_m < 0.0):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="pre_clearance_m must be finite and non-negative",
@@ -565,21 +565,6 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="final_clearance_m must be finite and at least 0.003 m",
-                )
-            if request.final_clearance_m > request.pre_clearance_m:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="final_clearance_m must be less than or equal to pre_clearance_m",
-                )
-            if request.pre_clearance_m - request.final_clearance_m > 0.06:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="final travel exceeds maximum of 0.06 m",
-                )
-            if not math.isfinite(request.retract_distance_m) or request.retract_distance_m < 0.0:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="retract_distance_m must be finite and non-negative",
                 )
             if (
                 not math.isfinite(request.final_velocity_scaling)
@@ -807,7 +792,7 @@ def main() -> None:
     parser.add_argument("--marker-pose-topic", default="/aruco_single/pose")
     parser.add_argument("--point-cloud-topic", default="/camera/camera/depth/color/points")
     parser.add_argument("--marker-id", type=int, default=6)
-    parser.add_argument("--marker-size-m", type=float, default=0.10)
+    parser.add_argument("--marker-size-m", type=float, default=0.03)
     parser.add_argument("--marker-timeout-s", type=float, default=1.0)
     parser.add_argument("--point-cloud-timeout-s", type=float, default=2.0)
     parser.add_argument("--home-pose-file", default=MarkerTaskBridge._default_home_pose_file())

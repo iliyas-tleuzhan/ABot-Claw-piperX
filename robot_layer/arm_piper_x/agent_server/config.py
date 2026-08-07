@@ -31,7 +31,7 @@ class PiperXAgentConfig:
         default_factory=lambda: ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
     )
     marker_id: int = 6
-    marker_size_m: float = 0.10
+    marker_size_m: float = 0.03
 
     @property
     def execution_allowed(self) -> bool:
@@ -57,4 +57,6 @@ def config_from_env(host: str | None = None, port: int | None = None) -> PiperXA
         marker_task_service=os.environ.get("PIPER_X_MARKER_TASK_SERVICE", "/run_marker_task"),
         state_timeout_s=float(os.environ.get("PIPER_X_AGENT_STATE_TIMEOUT_S", "1.0")),
         request_timeout_s=float(os.environ.get("PIPER_X_AGENT_REQUEST_TIMEOUT_S", "180.0")),
+        marker_id=int(os.environ.get("PIPER_X_MARKER_ID", "6")),
+        marker_size_m=float(os.environ.get("PIPER_X_MARKER_SIZE_M", "0.03")),
     )

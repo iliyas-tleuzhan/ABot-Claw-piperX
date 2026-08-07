@@ -119,6 +119,25 @@ class PiperXAgentServerTest(unittest.TestCase):
         self.assertEqual(result.status_code, 200)
         self.assertEqual(result.json()["agent"], "piper_x_agent_server")
 
+    def test_health_not_ready_when_marker_api_is_not_ready(self):
+        client, sdk, _env, _state = make_client()
+        sdk.health = lambda: {
+            "status": "not_ready",
+            "ros_ok": True,
+            "marker_pose_available": False,
+            "point_cloud_available": True,
+            "moveit_available": True,
+            "marker_task_service_available": True,
+            "home_action_available": True,
+            "joint_state_available": True,
+            "tcp_pose_available": True,
+            "execution_allowed": True,
+        }
+        result = client.get("/health")
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.json()["status"], "not_ready")
+        self.assertFalse(result.json()["marker_api_health"]["marker_pose_available"])
+
     def test_plan_only_approach_does_not_require_lease(self):
         client, sdk, _env, _state = make_client()
         result = client.post("/tools/approach-marker", json={"execute": False})

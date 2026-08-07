@@ -1,6 +1,6 @@
 ---
 name: piper-touch-marker
-description: Use the PiPER-X ROS 2 wall-approach tool for requests such as "touch the marker", "touch ArUco marker 6", "move the Piper arm to the marker", "approach the marker", "point at the marker", "press the marked location", "go home", or "return the Piper arm home".
+description: Use the PiPER-X ROS 2 Agent Server for requests such as "touch the marker", "touch ArUco marker 6", "move the Piper arm to the marker", "approach the marker", "point at the marker", "press the marked location", "go home", "return the Piper arm home", "save current pose as home", "go back to the previous pose", "save current pose as previous", "open the gripper", or "close the gripper".
 ---
 
 # PiPER Touch Marker
@@ -28,10 +28,33 @@ curl -sS http://127.0.0.1:8893/health
 Physical execution requires `execution_allowed: true` and a lease from
 `POST /lease/acquire`.
 
+For `touch` and `approach`, also require:
+
+- `marker_pose_available: true`
+- `point_cloud_available: true`
+- `moveit_available: true`
+- `marker_task_service_available: true`
+- `joint_state_available: true`
+
+For `go-home` and `go-previous`, marker and point-cloud readiness are not
+required, but require:
+
+- `home_action_available: true`
+- `joint_state_available: true`
+
+For `save-home` and `save-previous`, require fresh joint state. These commands
+do not move the robot.
+
+For `open-gripper` and `close-gripper`, marker, point-cloud, and camera
+readiness are not required, but require:
+
+- `gripper_control.supported: true`
+- an active ROS 2 driver subscriber on `/control/joint_states`
+
 For OpenClaw shell execution, prefer:
 
 ```bash
-python3 /home/dase-hw101/ABot-Claw/robot_layer/arm_piper_x/agent_server/run_piper_x_agent_task.py touch --execute --retract --return-home-after
+python3 /home/dase-hw101/ABot-Claw/robot_layer/arm_piper_x/agent_server/run_piper_x_agent_task.py touch --execute
 ```
 
 That helper acquires and releases a temporary lease automatically.
@@ -46,13 +69,15 @@ curl -sS -X POST http://127.0.0.1:8893/tools/approach-marker \
   -d '{"execute":true,"lease_id":"<LEASE_ID>","pre_clearance_m":0.05,"final_clearance_m":0.005,"retract_after":false,"retract_distance_m":0.05,"final_velocity_scaling":0.05,"return_home_after":false,"home_duration_s":6.0}'
 ```
 
-Touch marker, retract, then home:
+Touch marker directly:
 
 ```bash
 curl -sS -X POST http://127.0.0.1:8893/tools/touch-marker \
   -H 'Content-Type: application/json' \
-  -d '{"execute":true,"lease_id":"<LEASE_ID>","pre_clearance_m":0.05,"final_clearance_m":0.005,"retract_after":true,"retract_distance_m":0.05,"final_velocity_scaling":0.05,"return_home_after":true,"home_duration_s":6.0}'
+  -d '{"execute":true,"lease_id":"<LEASE_ID>","pre_clearance_m":0.05,"final_clearance_m":0.005,"retract_after":false,"retract_distance_m":0.05,"final_velocity_scaling":0.05,"return_home_after":false,"home_duration_s":6.0}'
 ```
+
+The touch planner targets the `tcp_link` contact point at the ArUco marker center using one MoveIt plan from the current robot state. The ROS 2 stack prefers elbow/wrist motion by keeping `joint1` near its current angle during planning.
 
 Go home:
 
@@ -70,17 +95,61 @@ curl -sS -X POST http://127.0.0.1:8893/tools/save-home \
   -d '{"pose_name":"home"}'
 ```
 
+Go back to previous pose:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8893/tools/go-previous \
+  -H 'Content-Type: application/json' \
+  -d '{"execute":true,"lease_id":"<LEASE_ID>","duration_s":6.0}'
+```
+
+Save current pose as previous:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8893/tools/save-previous \
+  -H 'Content-Type: application/json' \
+  -d '{}'
+```
+
+Open gripper:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8893/tools/open-gripper \
+  -H 'Content-Type: application/json' \
+  -d '{"execute":true,"lease_id":"<LEASE_ID>","width_m":0.10,"effort_n":1.0}'
+```
+
+Close gripper:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8893/tools/close-gripper \
+  -H 'Content-Type: application/json' \
+  -d '{"execute":true,"lease_id":"<LEASE_ID>","width_m":0.0,"effort_n":1.0}'
+```
+
 ## Safety
 
 This skill targets PiPER-X through the Agent Server on `8893`, not the regular
 Piper Agent Server on `8888`. The Agent Server wraps the lower-level ROS 2
 marker bridge on `8892`.
 
+Use the Agent Server helper or tool endpoints only. Do not publish ROS gripper
+messages directly from OpenClaw, and do not retry physical commands
+automatically after a failed health or execution precheck.
+
+The previous pose is a saved six-joint snapshot. Physical marker and home
+commands save the current pose as previous before sending motion, and
+`save-previous` can also be called manually from a known safe pose.
+
+Gripper commands use the AgileX ROS 2 command topic `/control/joint_states`,
+message type `sensor_msgs/msg/JointState`, joint name `gripper`, and command
+opening width in metres. They do not require the wrist camera.
+
 "Touch" is geometric only:
 
 ```json
 {
   "contact_confirmed": false,
-  "completion_type": "geometric_surface_approach"
+  "completion_type": "single_moveit_marker_touch"
 }
 ```

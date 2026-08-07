@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -14,6 +15,8 @@
 #include <moveit/move_group_interface/move_group_interface.hpp>
 #include <moveit/planning_scene_interface/planning_scene_interface.hpp>
 #include <moveit_msgs/msg/collision_object.hpp>
+#include <moveit_msgs/msg/constraints.hpp>
+#include <moveit_msgs/msg/joint_constraint.hpp>
 #include <pcl/ModelCoefficients.h>
 #include <pcl/filters/filter.h>
 #include <pcl/point_cloud.h>
@@ -85,6 +88,9 @@ public:
     velocity_scaling_ = declare_parameter<double>("velocity_scaling", 0.10);
     acceleration_scaling_ = declare_parameter<double>("acceleration_scaling", 0.10);
     planning_time_ = declare_parameter<double>("planning_time", 10.0);
+    planning_attempts_ = declare_parameter<int>("planning_attempts", 10);
+    goal_position_tolerance_ = declare_parameter<double>("goal_position_tolerance", 0.01);
+    goal_orientation_tolerance_ = declare_parameter<double>("goal_orientation_tolerance", 0.35);
     tool_roll_ = declare_parameter<double>("tool_roll", 0.0);
     execute_ = declare_parameter<bool>("execute", false);
     final_clearance_ = declare_parameter<double>("final_clearance", 0.005);
@@ -92,6 +98,11 @@ public:
     final_velocity_scaling_ = declare_parameter<double>("final_velocity_scaling", 0.05);
     retract_after_ = declare_parameter<bool>("retract_after", true);
     max_final_travel_ = declare_parameter<double>("max_final_travel", 0.06);
+    prefer_elbow_motion_ = declare_parameter<bool>("prefer_elbow_motion", true);
+    joint1_name_ = declare_parameter<std::string>("joint1_name", "joint1");
+    joint1_planning_tolerances_rad_ = declare_parameter<std::vector<double>>(
+      "joint1_planning_tolerances_rad", std::vector<double>{0.03, 0.06, 0.10, 0.15});
+    normalise_joint1_tolerances();
 
     target_publisher_ = create_publisher<geometry_msgs::msg::PoseStamped>(
       "/wall_approach/target_pose", 10);
@@ -135,13 +146,85 @@ public:
     move_group_->setMaxVelocityScalingFactor(velocity_scaling_);
     move_group_->setMaxAccelerationScalingFactor(acceleration_scaling_);
     move_group_->setPlanningTime(planning_time_);
+    move_group_->setNumPlanningAttempts(planning_attempts_);
+    move_group_->setGoalPositionTolerance(goal_position_tolerance_);
+    move_group_->setGoalOrientationTolerance(goal_orientation_tolerance_);
     RCLCPP_INFO(
-      get_logger(), "MoveIt ready: group=%s, tip=%s, frame=%s, execute=%s",
+      get_logger(),
+      "MoveIt ready: group=%s, tip=%s, frame=%s, execute=%s, prefer_elbow_motion=%s",
       planning_group_.c_str(), end_effector_link_.c_str(), base_frame_.c_str(),
-      execute_ ? "true" : "false");
+      execute_ ? "true" : "false", prefer_elbow_motion_ ? "true" : "false");
   }
 
 private:
+  void normalise_joint1_tolerances()
+  {
+    std::vector<double> filtered;
+    for (const auto tolerance : joint1_planning_tolerances_rad_) {
+      if (std::isfinite(tolerance) && tolerance > 0.0) {
+        filtered.push_back(tolerance);
+      }
+    }
+    if (filtered.empty()) {
+      filtered = {0.03, 0.06, 0.10, 0.15};
+    }
+    std::sort(filtered.begin(), filtered.end());
+    filtered.erase(std::unique(filtered.begin(), filtered.end()), filtered.end());
+    joint1_planning_tolerances_rad_ = filtered;
+  }
+
+  std::optional<double> current_joint_position(
+    const std::string & joint_name,
+    std::string & error)
+  {
+    if (!move_group_) {
+      error = "MoveIt interface is not ready";
+      return std::nullopt;
+    }
+    const auto joint_names = move_group_->getJointNames();
+    const auto joint_values = move_group_->getCurrentJointValues();
+    if (joint_names.size() != joint_values.size()) {
+      error = "MoveIt joint name/value sizes differ";
+      return std::nullopt;
+    }
+    for (std::size_t index = 0; index < joint_names.size(); ++index) {
+      if (joint_names[index] == joint_name) {
+        return joint_values[index];
+      }
+    }
+    error = "MoveIt current state does not contain " + joint_name;
+    return std::nullopt;
+  }
+
+  moveit_msgs::msg::Constraints joint1_path_constraint(
+    const double current_joint1,
+    const double tolerance) const
+  {
+    moveit_msgs::msg::Constraints constraints;
+    constraints.name = "prefer_elbow_motion_keep_joint1_near_current";
+
+    moveit_msgs::msg::JointConstraint joint_constraint;
+    joint_constraint.joint_name = joint1_name_;
+    joint_constraint.position = current_joint1;
+    joint_constraint.tolerance_above = tolerance;
+    joint_constraint.tolerance_below = tolerance;
+    joint_constraint.weight = 1.0;
+    constraints.joint_constraints.push_back(joint_constraint);
+    return constraints;
+  }
+
+  moveit::core::MoveItErrorCode plan_once(
+    const geometry_msgs::msg::PoseStamped & target,
+    moveit::planning_interface::MoveGroupInterface::Plan & plan)
+  {
+    move_group_->setStartStateToCurrentState();
+    move_group_->setPoseTarget(target, end_effector_link_);
+    const auto plan_result = move_group_->plan(plan);
+    move_group_->clearPoseTargets();
+    move_group_->clearPathConstraints();
+    return plan_result;
+  }
+
   bool marker_in_base(
     const geometry_msgs::msg::PoseStamped & input,
     geometry_msgs::msg::PoseStamped & output,
@@ -343,15 +426,46 @@ private:
     }
     const double previous_velocity_scaling = velocity_scaling_;
     move_group_->setMaxVelocityScalingFactor(velocity_scaling);
-    move_group_->setStartStateToCurrentState();
-    move_group_->setPoseTarget(target, end_effector_link_);
+
     moveit::planning_interface::MoveGroupInterface::Plan plan;
-    const auto plan_result = move_group_->plan(plan);
-    move_group_->clearPoseTargets();
+    moveit::core::MoveItErrorCode plan_result(moveit::core::MoveItErrorCode::FAILURE);
+    std::string joint_error;
+    const auto current_joint1 = prefer_elbow_motion_ ?
+      current_joint_position(joint1_name_, joint_error) : std::nullopt;
+
+    if (prefer_elbow_motion_ && current_joint1) {
+      for (const auto tolerance : joint1_planning_tolerances_rad_) {
+        move_group_->setPathConstraints(joint1_path_constraint(*current_joint1, tolerance));
+        RCLCPP_INFO(
+          get_logger(), "Planning %s with %s constrained to %.4f +/- %.4f rad",
+          plan_stage.c_str(), joint1_name_.c_str(), *current_joint1, tolerance);
+        plan_result = plan_once(target, plan);
+        if (plan_result == moveit::core::MoveItErrorCode::SUCCESS) {
+          RCLCPP_INFO(
+            get_logger(), "Planning %s succeeded with %s tolerance %.4f rad",
+            plan_stage.c_str(), joint1_name_.c_str(), tolerance);
+          break;
+        }
+      }
+    } else {
+      if (prefer_elbow_motion_) {
+        RCLCPP_WARN(
+          get_logger(), "Cannot apply %s preference for %s: %s",
+          joint1_name_.c_str(), plan_stage.c_str(), joint_error.c_str());
+      }
+      plan_result = plan_once(target, plan);
+    }
+
     move_group_->setMaxVelocityScalingFactor(previous_velocity_scaling);
     if (plan_result != moveit::core::MoveItErrorCode::SUCCESS) {
       failed_stage = plan_stage;
-      message = "MoveIt planning failed for " + plan_stage + "; target was published for RViz";
+      if (prefer_elbow_motion_ && current_joint1) {
+        message = "MoveIt planning failed for " + plan_stage +
+          " after trying bounded " + joint1_name_ +
+          " tolerances; target was published for RViz";
+      } else {
+        message = "MoveIt planning failed for " + plan_stage + "; target was published for RViz";
+      }
       return false;
     }
     if (!execute) {
@@ -380,26 +494,13 @@ private:
       message = "unsupported mode: " + mode;
       return false;
     }
-    if (!std::isfinite(pre_clearance) || pre_clearance < 0.0) {
+    if (mode == "approach" && (!std::isfinite(pre_clearance) || pre_clearance < 0.0)) {
       message = "pre_clearance_m must be finite and non-negative";
       return false;
     }
     if (mode == "touch") {
       if (!std::isfinite(final_clearance) || final_clearance < kMinimumFinalClearanceM) {
         message = "final_clearance_m must be finite and at least 0.003 m";
-        return false;
-      }
-      if (final_clearance > pre_clearance) {
-        message = "final_clearance_m must be less than or equal to pre_clearance_m";
-        return false;
-      }
-      if ((pre_clearance - final_clearance) > max_final_travel_) {
-        message = "final travel exceeds configured maximum of " + std::to_string(max_final_travel_) +
-          " m";
-        return false;
-      }
-      if (!std::isfinite(retract_distance) || retract_distance < 0.0) {
-        message = "retract_distance_m must be finite and non-negative";
         return false;
       }
       if (!std::isfinite(final_velocity_scaling) || final_velocity_scaling <= 0.0 ||
@@ -475,18 +576,19 @@ private:
     const Eigen::Vector3d marker_position = to_eigen(marker_base.pose.position);
     update_wall(marker_position, normal_base);
     publish_normal(centroid_base, normal_base);
-    const auto pre_touch = target_pose(marker_base, normal_base, pre_clearance);
-    target_publisher_->publish(pre_touch);
-    pre_touch_publisher_->publish(pre_touch);
-
-    if (!plan_and_maybe_execute(
-        pre_touch, velocity_scaling_, execute, "pre_touch_plan", "pre_touch_execution",
-        result.stage, result.message))
-    {
-      return result;
-    }
 
     if (mode == "approach") {
+      const auto approach_target = target_pose(marker_base, normal_base, pre_clearance);
+      target_publisher_->publish(approach_target);
+      pre_touch_publisher_->publish(approach_target);
+
+      if (!plan_and_maybe_execute(
+          approach_target, velocity_scaling_, execute, "approach_plan", "approach_execution",
+          result.stage, result.message))
+      {
+        return result;
+      }
+
       result.success = true;
       result.stage = "complete";
       result.message = execute ?
@@ -496,30 +598,25 @@ private:
     }
 
     const auto final_target = target_pose(marker_base, normal_base, final_clearance);
+    target_publisher_->publish(final_target);
     final_target_publisher_->publish(final_target);
     if (!plan_and_maybe_execute(
-        final_target, final_velocity_scaling, execute, "final_plan", "final_execution",
+        final_target, final_velocity_scaling, execute, "touch_plan", "touch_execution",
         result.stage, result.message))
     {
       return result;
     }
 
-    if (retract_after) {
-      const auto retract_target = target_pose(
-        marker_base, normal_base, final_clearance + retract_distance);
-      if (!plan_and_maybe_execute(
-          retract_target, velocity_scaling_, execute, "retract", "retract",
-          result.stage, result.message))
-      {
-        return result;
-      }
-    }
-
     result.success = true;
     result.stage = "complete";
+    result.completion_type = "single_moveit_marker_touch";
     result.message = execute ?
-      "geometric marker surface approach completed" :
-      "geometric marker surface approach plan succeeded (execute=false)";
+      "single MoveIt marker touch completed; retract_after ignored by direct touch mode" :
+      "single MoveIt marker touch plan succeeded (execute=false)";
+    if (retract_after && execute) {
+      RCLCPP_INFO(
+        get_logger(), "touch request had retract_after=true, but direct touch mode uses one plan only");
+    }
     return result;
   }
 
@@ -566,6 +663,9 @@ private:
   double velocity_scaling_{};
   double acceleration_scaling_{};
   double planning_time_{};
+  int planning_attempts_{};
+  double goal_position_tolerance_{};
+  double goal_orientation_tolerance_{};
   double tool_roll_{};
   double final_clearance_{};
   double retract_distance_{};
@@ -573,6 +673,9 @@ private:
   double max_final_travel_{};
   bool execute_{};
   bool retract_after_{};
+  bool prefer_elbow_motion_{};
+  std::string joint1_name_;
+  std::vector<double> joint1_planning_tolerances_rad_;
 
   std::mutex data_mutex_;
   std::mutex operation_mutex_;

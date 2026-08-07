@@ -74,7 +74,7 @@ camera:
 aruco:
   dictionary: DICT_ARUCO_ORIGINAL
   marker_id: 6
-  marker_size_m: 0.10
+  marker_size_m: 0.03
   pose_topic: /aruco_single/pose
 local_http_api:
   agent_base_url: http://127.0.0.1:8893

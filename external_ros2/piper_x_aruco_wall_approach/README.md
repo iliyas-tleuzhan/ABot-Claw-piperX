@@ -5,7 +5,7 @@ This ROS 2 Jazzy package makes the PiPER-X `tcp_link` approach a wall-mounted Ar
 It supports two commands:
 
 - `approach`: stop with `tcp_link` at a pre-touch clearance, default `0.05 m`.
-- `touch`: move to pre-touch, then make a slow geometric final approach, default final clearance `0.005 m`, then optionally retract.
+- `touch`: calculate the final marker target from the current camera/depth state and send one MoveIt plan directly to that target, default final clearance `0.005 m`.
 - `go-home`: move to the saved six-joint home pose.
 - `go-previous`: move back to the saved six-joint previous pose.
 
@@ -14,7 +14,7 @@ There is no force or tactile sensor. A successful `touch` reports:
 ```json
 {
   "contact_confirmed": false,
-  "completion_type": "geometric_surface_approach"
+  "completion_type": "single_moveit_marker_touch"
 }
 ```
 
@@ -28,7 +28,8 @@ RealSense D435i color/depth
        -> fits wall plane near marker
        -> publishes target poses and normal
        -> updates MoveIt detected_wall collision object
-       -> plans/executess tcp_link targets through MoveIt
+       -> plans/executes tcp_link targets through MoveIt
+       -> prefers elbow/wrist motion by keeping joint1 near its current angle
   -> /run_marker_task ROS 2 service
   -> piper_touch_marker_api HTTP bridge on 127.0.0.1:8892
        -> saves previous pose before physical marker/home motion
@@ -134,7 +135,9 @@ ros2 launch piper_x_aruco_wall_approach touch_marker_full_stack.launch.py \
   calibration_file:=/home/dase-hw101/handeye/config/piper_x_d435i_eye_in_hand.json \
   point_cloud_topic:=/camera/camera/depth/color/points \
   marker_id:=6 \
-  marker_size:=0.10 \
+  marker_size:=0.03 \
+  prefer_elbow_motion:=true \
+  goal_orientation_tolerance:=0.35 \
   marker_timeout:=1.0 \
   point_cloud_timeout:=2.0
 ```
@@ -216,7 +219,7 @@ curl -sS http://127.0.0.1:8892/tools/piper/touch-marker \
     "execute": true,
     "pre_clearance_m": 0.05,
     "final_clearance_m": 0.005,
-    "retract_after": true,
+    "retract_after": false,
     "retract_distance_m": 0.05,
     "final_velocity_scaling": 0.05
 }' | python3 -m json.tool
@@ -253,7 +256,6 @@ Published targets:
 
 ```text
 /wall_approach/target_pose
-/wall_approach/pre_touch_target
 /wall_approach/final_target
 /wall_approach/normal
 ```
@@ -295,7 +297,7 @@ ros2 launch piper_x_aruco_wall_approach touch_marker_full_stack.launch.py \
 
 ## Troubleshooting
 
-If `/health` says `marker_pose_available=false`, confirm ArUco ID `6`, marker size `0.10`, marker visibility, and:
+If `/health` says `marker_pose_available=false`, confirm ArUco ID `6`, marker size `0.03`, marker visibility, and:
 
 ```bash
 ros2 topic echo /aruco_single/pose --once
@@ -320,4 +322,6 @@ systemctl --user set-environment PIPER_TOUCH_ALLOW_EXECUTION=1
 systemctl --user restart piper-touch-marker-stack
 ```
 
-If MoveIt planning fails, inspect `/wall_approach/pre_touch_target`, `/wall_approach/final_target`, and the `detected_wall` collision object in RViz.
+If MoveIt planning fails, inspect `/wall_approach/final_target`, `/wall_approach/target_pose`, and the `detected_wall` collision object in RViz.
+
+The marker planner defaults to `prefer_elbow_motion:=true`. It first tries to keep `joint1` within small tolerances around the current angle (`0.03`, `0.06`, `0.10`, then `0.15` rad), so the arm should prefer joints 2/3/4/5 instead of yawing the base. If the marker is physically reachable only with more base yaw, widen `joint1_planning_tolerances_rad` in `config/wall_approach.yaml` deliberately.

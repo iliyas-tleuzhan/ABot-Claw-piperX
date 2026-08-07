@@ -20,13 +20,13 @@ SPEC.loader.exec_module(api)
 
 class FakeAdapter(api.RosMarkerTaskAdapter):
     def __init__(self, health=None, result=None, delay_s=0.0, exc=None):
-        self._health = health or api.HealthSnapshot(True, True, True, True, True, True, True, 6, 0.10, False)
+        self._health = health or api.HealthSnapshot(True, True, True, True, True, True, True, 6, 0.03, False)
         self._result = result or {
             "success": True,
             "stage": "complete",
             "message": "ok",
             "contact_confirmed": False,
-            "completion_type": "geometric_surface_approach",
+            "completion_type": "single_moveit_marker_touch",
         }
         self.delay_s = delay_s
         self.exc = exc
@@ -114,7 +114,7 @@ def test_health_endpoint_reports_state(monkeypatch):
             True,
             True,
             6,
-            0.10,
+            0.03,
             False,
             marker_pose_age_s=0.2,
             point_cloud_age_s=0.1,
@@ -126,7 +126,7 @@ def test_health_endpoint_reports_state(monkeypatch):
     assert response.status_code == 200
     body = response.json()
     assert body["configured_marker_id"] == 6
-    assert body["configured_marker_size_m"] == 0.10
+    assert body["configured_marker_size_m"] == 0.03
     assert body["execution_allowed"] is False
     assert body["marker_pose_available"] is True
     assert body["marker_pose_age_s"] == 0.2
@@ -367,13 +367,12 @@ def test_invalid_touch_clearance_rejected():
     assert "at least 0.003" in response.json()["detail"]
 
 
-def test_invalid_final_travel_rejected():
+def test_touch_does_not_use_pre_touch_travel_validation():
     response = client(FakeAdapter()).post(
         "/tools/piper/touch-marker",
         json={"pre_clearance_m": 0.10, "final_clearance_m": 0.005},
     )
-    assert response.status_code == 400
-    assert "final travel exceeds" in response.json()["detail"]
+    assert response.status_code == 200
 
 
 def test_concurrent_request_returns_409():
@@ -397,4 +396,4 @@ def test_contact_is_never_force_confirmed():
     response = client(FakeAdapter()).post("/tools/piper/touch-marker", json={})
     body = response.json()
     assert body["contact_confirmed"] is False
-    assert body["completion_type"] == "geometric_surface_approach"
+    assert body["completion_type"] == "single_moveit_marker_touch"

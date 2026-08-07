@@ -13,9 +13,16 @@ def create_router(cfg, state_monitor, sdk, lease_mgr) -> APIRouter:
         marker_health = sdk.health()
         state = state_monitor.state()
         graph = state_monitor.graph()
+        marker_api_ready = marker_health.get("status") == "ready"
         return {
             "status": "ready"
-            if marker_health.get("ros_ok") and state.get("joint_state_fresh") and graph.get("trajectory_action_available")
+            if (
+                marker_api_ready
+                and state.get("joint_state_fresh")
+                and state.get("tcp_pose_fresh")
+                and graph.get("trajectory_action_available")
+                and graph.get("marker_task_service_seen")
+            )
             else "not_ready",
             "agent": "piper_x_agent_server",
             "port": cfg.port,

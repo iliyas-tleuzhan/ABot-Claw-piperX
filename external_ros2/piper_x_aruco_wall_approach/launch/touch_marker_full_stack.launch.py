@@ -18,6 +18,8 @@ def generate_launch_description():
     pre_clearance = LaunchConfiguration("pre_clearance")
     final_clearance = LaunchConfiguration("final_clearance")
     retract_after = LaunchConfiguration("retract_after")
+    prefer_elbow_motion = LaunchConfiguration("prefer_elbow_motion")
+    goal_orientation_tolerance = LaunchConfiguration("goal_orientation_tolerance")
     can_port = LaunchConfiguration("can_port")
     auto_enable = LaunchConfiguration("auto_enable")
     follow = LaunchConfiguration("follow")
@@ -46,12 +48,14 @@ def generate_launch_description():
             default_value="/camera/camera/depth/color/points",
         ),
         DeclareLaunchArgument("marker_id", default_value="6"),
-        DeclareLaunchArgument("marker_size", default_value="0.10"),
+        DeclareLaunchArgument("marker_size", default_value="0.03"),
         DeclareLaunchArgument("api_port", default_value="8892"),
         DeclareLaunchArgument("api_host", default_value="127.0.0.1"),
         DeclareLaunchArgument("pre_clearance", default_value="0.05"),
         DeclareLaunchArgument("final_clearance", default_value="0.005"),
         DeclareLaunchArgument("retract_after", default_value="true"),
+        DeclareLaunchArgument("prefer_elbow_motion", default_value="true"),
+        DeclareLaunchArgument("goal_orientation_tolerance", default_value="0.35"),
         DeclareLaunchArgument("use_rviz", default_value="false"),
         DeclareLaunchArgument("can_port", default_value="can0"),
         DeclareLaunchArgument("auto_enable", default_value="false"),
@@ -163,6 +167,11 @@ def generate_launch_description():
                     "clearance": ParameterValue(pre_clearance, value_type=float),
                     "final_clearance": ParameterValue(final_clearance, value_type=float),
                     "retract_after": ParameterValue(retract_after, value_type=bool),
+                    "prefer_elbow_motion": ParameterValue(prefer_elbow_motion, value_type=bool),
+                    "goal_orientation_tolerance": ParameterValue(
+                        goal_orientation_tolerance,
+                        value_type=float,
+                    ),
                     "point_cloud_topic": point_cloud_topic,
                 },
             ],

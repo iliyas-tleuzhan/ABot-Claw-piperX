@@ -15,6 +15,8 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('execute', default_value='false'),
         DeclareLaunchArgument('clearance', default_value='0.05'),
+        DeclareLaunchArgument('prefer_elbow_motion', default_value='true'),
+        DeclareLaunchArgument('goal_orientation_tolerance', default_value='0.35'),
         DeclareLaunchArgument(
             'point_cloud_topic',
             default_value='/camera/camera/depth/color/points',
@@ -32,6 +34,10 @@ def generate_launch_description():
                     'clearance': LaunchConfiguration('clearance'),
                     'point_cloud_topic': LaunchConfiguration('point_cloud_topic'),
                     'tool_roll': LaunchConfiguration('tool_roll'),
+                    'prefer_elbow_motion': LaunchConfiguration('prefer_elbow_motion'),
+                    'goal_orientation_tolerance': LaunchConfiguration(
+                        'goal_orientation_tolerance'
+                    ),
                 }
             ],
         ),

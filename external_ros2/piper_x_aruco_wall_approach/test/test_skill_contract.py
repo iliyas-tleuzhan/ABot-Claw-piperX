@@ -17,5 +17,5 @@ def test_abot_skill_exists_with_required_contract():
     assert "joint_state_available" in text
     assert "execution_allowed=false" in text or "execution_allowed: true" in text
     assert "contact_confirmed" in text
-    assert "geometric_surface_approach" in text
+    assert "single_moveit_marker_touch" in text
     assert "Never generate arbitrary MoveIt" in text

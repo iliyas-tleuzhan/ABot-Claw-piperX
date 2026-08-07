@@ -31,7 +31,7 @@ Physical execution requires `execution_allowed: true` and a lease from
 For OpenClaw shell execution, prefer:
 
 ```bash
-python3 /home/dase-hw101/ABot-Claw/robot_layer/arm_piper_x/agent_server/run_piper_x_agent_task.py touch --execute --retract --return-home-after
+python3 /home/dase-hw101/ABot-Claw/robot_layer/arm_piper_x/agent_server/run_piper_x_agent_task.py touch --execute
 ```
 
 That helper acquires and releases a temporary lease automatically.
@@ -46,13 +46,15 @@ curl -sS -X POST http://127.0.0.1:8893/tools/approach-marker \
   -d '{"execute":true,"lease_id":"<LEASE_ID>","pre_clearance_m":0.05,"final_clearance_m":0.005,"retract_after":false,"retract_distance_m":0.05,"final_velocity_scaling":0.05,"return_home_after":false,"home_duration_s":6.0}'
 ```
 
-Touch marker, retract, then home:
+Touch marker directly:
 
 ```bash
 curl -sS -X POST http://127.0.0.1:8893/tools/touch-marker \
   -H 'Content-Type: application/json' \
-  -d '{"execute":true,"lease_id":"<LEASE_ID>","pre_clearance_m":0.05,"final_clearance_m":0.005,"retract_after":true,"retract_distance_m":0.05,"final_velocity_scaling":0.05,"return_home_after":true,"home_duration_s":6.0}'
+  -d '{"execute":true,"lease_id":"<LEASE_ID>","pre_clearance_m":0.05,"final_clearance_m":0.005,"retract_after":false,"retract_distance_m":0.05,"final_velocity_scaling":0.05,"return_home_after":false,"home_duration_s":6.0}'
 ```
+
+The touch planner targets the `tcp_link` contact point at the ArUco marker center using one MoveIt plan from the current robot state. The ROS 2 stack prefers elbow/wrist motion by keeping `joint1` near its current angle during planning.
 
 Go home:
 
@@ -121,6 +123,6 @@ opening width in metres. They do not require the wrist camera.
 ```json
 {
   "contact_confirmed": false,
-  "completion_type": "geometric_surface_approach"
+  "completion_type": "single_moveit_marker_touch"
 }
 ```

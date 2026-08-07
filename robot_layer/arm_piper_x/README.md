@@ -52,7 +52,7 @@ talk directly to CAN or expose arbitrary joint commands.
 - camera info: `/camera/camera/color/camera_info`
 - point cloud: `/camera/camera/depth/color/points`
 - ArUco pose: `/aruco_single/pose`
-- marker: ID `6`, size `0.10 m`
+- marker: ID `6`, size `0.03 m`
 - hand-eye calibration file:
   `/home/dase-hw101/handeye/config/piper_x_d435i_eye_in_hand.json`
 
