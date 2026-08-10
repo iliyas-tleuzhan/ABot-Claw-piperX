@@ -32,7 +32,8 @@ class FakeAdapter(api.RosMarkerTaskAdapter):
             "success": True,
             "marker_found": True,
             "marker_id": 6,
-            "found_at_pose": "search_mid_center",
+            "found_at_pose": "reactive_up",
+            "steps_used": 1,
             "poses_checked": 1,
             "stage": "complete",
             "message": "marker acquired",
@@ -237,13 +238,46 @@ def test_search_marker_endpoint_proxies_search():
     assert [call[0] for call in adapter.calls] == ["search"]
 
 
+def test_search_step_endpoint_proxies_one_step():
+    adapter = FakeAdapter(
+        search_result={
+            "success": True,
+            "marker_found": False,
+            "marker_id": 6,
+            "found_at_pose": "",
+            "steps_used": 1,
+            "poses_checked": 1,
+            "stage": "step_complete",
+            "message": "reactive search step completed; marker_not_found",
+        }
+    )
+    response = client(adapter).post(
+        "/tools/piper/search-step",
+        json={"execute": False, "direction": "up", "max_steps": 100},
+    )
+    assert response.status_code == 200
+    assert response.json()["marker_found"] is False
+    assert response.json()["steps_used"] == 1
+    assert adapter.calls[0][0] == "search"
+    assert adapter.calls[0][1].direction == "up"
+    assert adapter.calls[0][1].max_steps == 1
+
+
+def test_search_step_endpoint_rejects_auto_direction():
+    response = client(FakeAdapter()).post(
+        "/tools/piper/search-step",
+        json={"execute": False, "direction": "auto"},
+    )
+    assert response.status_code == 400
+
+
 def test_marker_absence_triggers_search_before_approach():
     adapter = FakeAdapter(
         health=api.HealthSnapshot(True, False, True, True, True, True, True, 6, 0.03, False)
     )
     response = client(adapter).post("/tools/piper/approach-marker", json={})
     assert response.status_code == 200
-    assert response.json()["search_result"]["found_at_pose"] == "search_mid_center"
+    assert response.json()["search_result"]["found_at_pose"] == "reactive_up"
     assert [call[0] for call in adapter.calls] == ["search", "approach"]
 
 

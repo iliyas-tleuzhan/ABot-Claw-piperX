@@ -110,8 +110,8 @@ Fill these in before serious deployment:
 - MoveIt: `agx_arm_moveit`, group `arm`, tip `tcp_link`
 - TCP offset: `[0.0, 0.0, 0.1425, 0.0, 0.0, 0.0]`
 - Feedback topic: `/feedback/joint_states`
-- Camera: wrist RealSense D435i
-- ArUco: ID `6`, size `0.10 m`
+- Camera: wrist RealSense D435i depth camera
+- ArUco: ID `6`, size `0.03 m`
 - Point cloud: `/camera/camera/depth/color/points`
 - Skill: `abotclaw-piper-x-manipulation` or short alias `piper-touch-marker`
 

@@ -48,6 +48,8 @@ class MarkerTaskRequest(BaseModel):
 
 class SearchMarkerRequest(BaseModel):
     execute: bool = False
+    direction: str = Field(default="auto")
+    max_steps: int = Field(default=100)
 
 
 class HomeRequest(BaseModel):
@@ -388,6 +390,8 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
 
         service_request = SearchMarker.Request()
         service_request.execute = request.execute
+        service_request.direction = request.direction
+        service_request.max_steps = request.max_steps
         future = self._search_client.call_async(service_request)
         deadline = time.monotonic() + 180.0
         while rclpy.ok() and not future.done() and time.monotonic() < deadline:
@@ -402,6 +406,7 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
             "marker_found": bool(response.marker_found),
             "marker_id": int(response.marker_id),
             "found_at_pose": str(response.found_at_pose),
+            "steps_used": int(response.poses_checked),
             "poses_checked": int(response.poses_checked),
             "stage": str(response.stage),
             "message": str(response.message),
@@ -880,6 +885,23 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
         _: None = Depends(require_auth),
     ) -> Dict[str, Any]:
         return run_search_endpoint(request)
+
+    @app.post("/tools/piper/search-step")
+    def search_step(
+        request: SearchMarkerRequest,
+        _: None = Depends(require_auth),
+    ) -> Dict[str, Any]:
+        if not request.direction or request.direction.strip().lower() in {"auto", "reactive"}:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="search-step requires one direction: left, right, up, down, center, or current",
+            )
+        step_request = SearchMarkerRequest(
+            execute=request.execute,
+            direction=request.direction,
+            max_steps=1,
+        )
+        return run_search_endpoint(step_request)
 
     @app.post("/tools/piper/go-home")
     def go_home(

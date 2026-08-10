@@ -73,9 +73,8 @@ cd ~/ABot-Claw-piper-publish
 
 The installer enables the user service but does not start it. It does not configure CAN.
 
-`can2` must already be configured and UP before starting the stack. If the arm
-is temporarily wired to another interface, override the launch with
-`can_port:=can0` or another explicit CAN device.
+`can2` must already be configured and UP before starting the stack. The PiPER-X
+arm is expected on `can2`; the Bunker base is expected on `can3`.
 
 ## Managed Startup
 
@@ -159,14 +158,14 @@ The launch starts:
 - HTTP API bridge
 
 It must not be run together with another PiPER-X driver on the selected CAN
-interface. The default is `can2`; use `can_port:=can0` to override when needed.
+interface. The PiPER-X arm uses `can2`. The Bunker base uses `can3`.
 
 ## Marker Search
 
 `approach-marker` and `touch-marker` check the current camera view first. If
-marker `6` is not visible, the `8892` bridge calls `/search_marker`, waits for
-the marker to be acquired, then runs the existing wall-plane and MoveIt
-approach/touch pipeline unchanged.
+marker `6` is visible, they run the existing wall-plane and MoveIt
+approach/touch pipeline unchanged. If marker `6` is hidden, OpenClaw should use
+reactive search through the Agent Server `/tools/search-step` endpoint.
 
 Direct search debug:
 
@@ -176,18 +175,18 @@ ros2 run piper_x_aruco_wall_approach piper_touch_marker_client.py search --execu
 
 Search parameters live in `config/piper_x_search_poses.yaml`:
 
-- 3x3 view order starts at `search_mid_center`
-- horizontal metadata: `-25`, `0`, `+25` degrees
-- vertical metadata: `+15`, `0`, `-15` degrees
+- no hardcoded 3x3 joint-pose grid
+- `max_steps: 100`
 - `settle_time_s: 0.5`
 - `detection_window_frames: 5`
 - `required_detections: 3`
-- local reacquisition suffixes cover `+/-5`, `+/-10`, `+/-15` degree yaw/pitch corrections
+- allowed directions: `left`, `right`, `up`, `down`, `center`, `current`
+- each direction maps to a small configured six-joint delta and is planned
+  through MoveIt
+- prefer `up` as the first reactive search step because marker 6 is usually mounted high; `up` tilts the wrist camera with joint4 first
 
-The yaw/pitch values are metadata for the operator. Capture the actual six
-PiPER-X joint positions on the physical robot for each search pose, then set
-that pose's `calibrated` flag to `true`. Uncalibrated poses fail closed instead
-of commanding guessed joint targets.
+There is no wall-clock search limit in the ROS search loop. Search stops when
+marker 6 is confirmed or when the step count is exhausted.
 
 ## Operator Client
 

@@ -85,6 +85,8 @@ local_http_api:
   agent_lease_release: /lease/release
   approach_marker: /tools/approach-marker
   touch_marker: /tools/touch-marker
+  search_marker: /tools/search-marker
+  search_step: /tools/search-step
   go_home: /tools/go-home
   save_home: /tools/save-home
   go_previous: /tools/go-previous

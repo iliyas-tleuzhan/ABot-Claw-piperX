@@ -1,6 +1,6 @@
 ---
 name: abotclaw-piper-x-manipulation
-description: Route PiPER-X marker and home-pose commands through the PiPER-X Agent Server on 127.0.0.1:8893. Use when the user asks the PiPER-X arm to approach/touch ArUco marker 6, press the marked location, go home, or save the current pose as home.
+description: Route PiPER-X marker, home-pose, previous-pose, and gripper commands through the PiPER-X Agent Server on 127.0.0.1:8893. Use when the user asks the PiPER-X arm to approach/touch ArUco marker 6, press the marked location, go home, go back to the previous pose, save the current pose as home or previous, open the gripper, or close the gripper.
 ---
 
 # AbotClaw PiPER-X Manipulation
@@ -15,18 +15,22 @@ workcell stack.
 - Arm launch argument: `arm_type:=piper_x`
 - End effector: `effector_type:=agx_gripper`
 - Firmware argument: `fw_version:=v189`
-- CAN: default `can2` at 1 Mbps. Use the ROS launch `can_port:=can0` override
-  only when the PiPER-X arm is temporarily wired to `can0`.
+- CAN: always `can2` at 1 Mbps for the PiPER-X arm.
 - MoveIt group: `arm`
 - MoveIt tip/TCP: `tcp_link`
 - TCP offset: `[0.0, 0.0, 0.1425, 0.0, 0.0, 0.0]`
 - Joint feedback: `/feedback/joint_states`
-- Wrist camera: Intel RealSense D435i
+- Gripper command: `/control/joint_states`
+- Gripper joint: `gripper`
+- Gripper width range: `[0.0, 0.1] m`
+- Gripper effort range: `[0.5, 3.0] N`
+- Wrist camera: Intel RealSense D435i depth camera
 - Point cloud: `/camera/camera/depth/color/points`
 - ArUco pose: `/aruco_single/pose`
-- Marker: ID `6`, size `0.10 m`
+- Marker: ID `6`, size `0.03 m`
 - PiPER-X Agent Server: `http://127.0.0.1:8893`
 - Low-level marker bridge: `http://127.0.0.1:8892`
+- Bunker CAN: always `can3`; do not move Bunker during PiPER-X marker search unless a separate Bunker controller is explicitly enabled.
 
 The Agent Server is under
 `robot_layer/arm_piper_x/agent_server`. It wraps the lower-level ROS 2 package
@@ -55,15 +59,63 @@ For `approach` and `touch`, require:
   The `run_piper_x_agent_task.py` helper acquires and releases this lease
   automatically when `--execute` is used without `--lease-id`.
 
-For `go home`, marker and point-cloud readiness are not required. Require:
+For `go home` and `go previous`, marker and point-cloud readiness are not
+required. Require:
 
 - `ros_ok: true`
 - `home_action_available: true`
 - `joint_state_available: true`
 - `execution_allowed: true` for physical execution
 
-For `save current pose as home`, require fresh joint state. This command does
-not move the robot.
+For `save current pose as home` and `save current pose as previous`, require
+fresh joint state. These commands do not move the robot.
+
+Physical `approach`, `touch`, and `go home` automatically save the current
+six-joint pose as `previous` before sending a trajectory. That gives the
+operator a bounded "go back to previous pose" command after a move. If the
+previous pose file does not exist yet, call `save-previous` from a known safe
+pose first.
+
+For `open gripper` and `close gripper`, marker, point-cloud, and camera
+readiness are not required. Require:
+
+- `ros_ok: true`
+- `gripper_control.supported: true`
+- an active ROS 2 driver subscriber on `/control/joint_states` for physical
+  execution
+- `execution_allowed: true` for physical execution
+- a valid `/lease/acquire` lease for physical execution through the Agent
+  Server
+
+
+## Reactive Marker Search
+
+The old 3x3 hardcoded search-pose grid is retired. Marker search is reactive:
+OpenClaw decides one camera-search direction at a time, and the PiPER-X robot
+layer executes only bounded MoveIt search primitives.
+
+Use this loop when marker 6 is not visible:
+
+1. Check `GET http://127.0.0.1:8893/health`.
+2. If `marker_visible: true`, stop searching and call `touch-marker` or
+   `approach-marker`.
+3. If marker is hidden, acquire a lease and call `/tools/search-step` once with
+   one of `left`, `right`, `up`, `down`, `center`, or `current`. Start with
+   `up` unless the latest camera evidence clearly suggests another direction.
+4. Re-check after every step.
+5. Stop immediately when marker 6 is found.
+6. Stop after 100 total search steps and report `marker_not_found`.
+
+Example one-step command:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8893/tools/search-step \
+  -H 'Content-Type: application/json' \
+  -d '{"execute":true,"lease_id":"<LEASE_ID>","direction":"up","max_steps":1}'
+```
+
+Do not generate raw joint, CAN, or arbitrary MoveIt commands. The robot layer
+clamps each search step and plans it through MoveIt.
 
 ## Routing
 
@@ -98,12 +150,47 @@ python3 robot_layer/arm_piper_x/agent_server/run_piper_x_agent_task.py \
   --execute
 ```
 
+For "go back to previous pose", "return to the previous pose", or "move back":
+
+```bash
+cd /home/dase-hw101/ABot-Claw &&
+python3 robot_layer/arm_piper_x/agent_server/run_piper_x_agent_task.py \
+  previous \
+  --execute
+```
+
 For "save current pose as home" or "remember current pose as home":
 
 ```bash
 cd /home/dase-hw101/ABot-Claw &&
 python3 robot_layer/arm_piper_x/agent_server/run_piper_x_agent_task.py \
   save-home
+```
+
+For "save current pose as previous" or "remember current pose as previous":
+
+```bash
+cd /home/dase-hw101/ABot-Claw &&
+python3 robot_layer/arm_piper_x/agent_server/run_piper_x_agent_task.py \
+  save-previous
+```
+
+For "open the gripper", "release the gripper", or "open the claw":
+
+```bash
+cd /home/dase-hw101/ABot-Claw &&
+python3 robot_layer/arm_piper_x/agent_server/run_piper_x_agent_task.py \
+  open-gripper \
+  --execute
+```
+
+For "close the gripper", "close the claw", or "shut the gripper":
+
+```bash
+cd /home/dase-hw101/ABot-Claw &&
+python3 robot_layer/arm_piper_x/agent_server/run_piper_x_agent_task.py \
+  close-gripper \
+  --execute
 ```
 
 ## Parser
@@ -114,6 +201,10 @@ Use `scripts/piper_x_marker_task.py` to classify language into one of:
 - `touch`
 - `home`
 - `save-home`
+- `previous`
+- `save-previous`
+- `open-gripper`
+- `close-gripper`
 
 Example:
 
@@ -130,6 +221,8 @@ python3 /home/dase-hw101/.openclaw/workspace/skills/abotclaw-piper-x-manipulatio
 - Treat `127.0.0.1:8892` as the lower-level marker/home bridge, not the OpenClaw-facing Agent Server.
 - Do not import or call regular Piper `piper_sdk` from this skill.
 - Do not generate arbitrary joint, CAN, gripper, or MoveIt code.
+- For gripper commands, use only `/tools/open-gripper` and
+  `/tools/close-gripper`; do not publish ROS messages directly from OpenClaw.
 - Do not retry physical commands automatically.
 - Do not call `execute=true` when `/health` reports `execution_allowed=false`.
 - Report the exact failed `stage` and `message` returned by the API.

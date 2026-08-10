@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <cmath>
 #include <memory>
 #include <mutex>
@@ -20,23 +21,53 @@ namespace
 {
 constexpr std::size_t kJointCount = 6;
 
-struct SearchPose
+std::vector<double> degrees_to_radians(const std::vector<double> & degrees)
 {
-  std::string name;
-  bool calibrated{false};
-  double camera_yaw_deg{0.0};
-  double camera_pitch_deg{0.0};
-  std::vector<double> joints;
-};
-
-bool valid_joint_target(const std::vector<double> & joints)
-{
-  if (joints.size() != kJointCount) {
-    return false;
+  std::vector<double> radians;
+  radians.reserve(degrees.size());
+  for (const auto value : degrees) {
+    radians.push_back(value * M_PI / 180.0);
   }
-  return std::all_of(joints.begin(), joints.end(), [](const double value) {
+  return radians;
+}
+
+bool valid_delta(const std::vector<double> & values)
+{
+  return values.size() == kJointCount && std::all_of(values.begin(), values.end(), [](const double value) {
     return std::isfinite(value);
   });
+}
+
+std::string normalise_direction(std::string direction)
+{
+  std::transform(direction.begin(), direction.end(), direction.begin(), [](const unsigned char ch) {
+    return static_cast<char>(std::tolower(ch));
+  });
+  direction.erase(std::remove_if(direction.begin(), direction.end(), [](const char ch) {
+    return ch == ' ' || ch == '_' || ch == '-';
+  }), direction.end());
+  if (direction.empty() || direction == "auto" || direction == "reactive") {
+    return "auto";
+  }
+  if (direction == "current" || direction == "check" || direction == "none") {
+    return "current";
+  }
+  if (direction == "left") {
+    return "left";
+  }
+  if (direction == "right") {
+    return "right";
+  }
+  if (direction == "up") {
+    return "up";
+  }
+  if (direction == "down") {
+    return "down";
+  }
+  if (direction == "center" || direction == "centre") {
+    return "center";
+  }
+  return direction;
 }
 }  // namespace
 
@@ -53,36 +84,19 @@ public:
     settle_time_s_ = declare_parameter<double>("settle_time_s", 0.5);
     detection_window_frames_ = declare_parameter<int>("detection_window_frames", 5);
     required_detections_ = declare_parameter<int>("required_detections", 3);
+    max_steps_ = declare_parameter<int>("max_steps", 100);
     velocity_scaling_ = declare_parameter<double>("velocity_scaling", 0.10);
     acceleration_scaling_ = declare_parameter<double>("acceleration_scaling", 0.10);
     planning_time_ = declare_parameter<double>("planning_time", 10.0);
     planning_attempts_ = declare_parameter<int>("planning_attempts", 10);
-    return_to_center_on_failure_ = declare_parameter<bool>("return_to_center_on_failure", true);
-    search_center_pose_ = declare_parameter<std::string>("search_center_pose", "search_mid_center");
-    search_order_ = declare_parameter<std::vector<std::string>>(
-      "search_order",
-      std::vector<std::string>{
-        "search_mid_center",
-        "search_mid_left",
-        "search_up_left",
-        "search_up_center",
-        "search_up_right",
-        "search_mid_right",
-        "search_down_right",
-        "search_down_center",
-        "search_down_left"});
-    local_reacquisition_enabled_ =
-      declare_parameter<bool>("local_reacquisition.enabled", true);
-    local_pose_suffixes_ = declare_parameter<std::vector<std::string>>(
-      "local_reacquisition.pose_suffixes",
-      std::vector<std::string>{
-        "yaw_p5", "yaw_m5", "yaw_p10", "yaw_m10", "yaw_p15", "yaw_m15",
-        "pitch_p5", "pitch_m5", "pitch_p10", "pitch_m10", "pitch_p15", "pitch_m15"});
-    (void)declare_parameter<int>("local_reacquisition.step_deg", 5);
-    (void)declare_parameter<int>("local_reacquisition.max_offset_deg", 15);
+    max_single_joint_step_deg_ = declare_parameter<double>("max_single_joint_step_deg", 8.0);
+    center_step_scale_ = declare_parameter<double>("center_step_scale", 1.0);
+    auto_sequence_ = declare_parameter<std::vector<std::string>>(
+      "auto_sequence",
+      std::vector<std::string>{"up", "up", "left", "right", "right", "left", "down", "down"});
 
-    normalise_detection_parameters();
-    load_search_poses();
+    load_direction_deltas();
+    normalise_parameters();
 
     marker_subscription_ = create_subscription<geometry_msgs::msg::PoseStamped>(
       aruco_pose_topic_, 10,
@@ -103,8 +117,8 @@ public:
 
     RCLCPP_INFO(
       get_logger(),
-      "Search marker service ready: marker_id=%d, poses=%zu, settle_time_s=%.2f, detection=%d/%d",
-      marker_id_, search_order_.size(), settle_time_s_, required_detections_, detection_window_frames_);
+      "Reactive search service ready: marker_id=%d, max_steps=%d, settle_time_s=%.2f, detection=%d/%d",
+      marker_id_, max_steps_, settle_time_s_, required_detections_, detection_window_frames_);
   }
 
   void initialise_moveit(const rclcpp::Node::SharedPtr & node)
@@ -116,7 +130,7 @@ public:
     move_group_->setMaxAccelerationScalingFactor(acceleration_scaling_);
     move_group_->setPlanningTime(planning_time_);
     move_group_->setNumPlanningAttempts(planning_attempts_);
-    RCLCPP_INFO(get_logger(), "MoveIt ready for marker search: group=%s", planning_group_.c_str());
+    RCLCPP_INFO(get_logger(), "MoveIt ready for reactive marker search: group=%s", planning_group_.c_str());
   }
 
 private:
@@ -129,7 +143,19 @@ private:
     return static_cast<double>(stamp.sec) + static_cast<double>(stamp.nanosec) * 1e-9;
   }
 
-  void normalise_detection_parameters()
+  void load_direction_deltas()
+  {
+    direction_deltas_["left"] = degrees_to_radians(declare_parameter<std::vector<double>>(
+      "direction_deltas_deg.left", std::vector<double>{5.0, 0.0, 0.0, 0.0, 0.0, 0.0}));
+    direction_deltas_["right"] = degrees_to_radians(declare_parameter<std::vector<double>>(
+      "direction_deltas_deg.right", std::vector<double>{-5.0, 0.0, 0.0, 0.0, 0.0, 0.0}));
+    direction_deltas_["up"] = degrees_to_radians(declare_parameter<std::vector<double>>(
+      "direction_deltas_deg.up", std::vector<double>{0.0, 0.0, 0.0, 5.0, 0.0, 0.0}));
+    direction_deltas_["down"] = degrees_to_radians(declare_parameter<std::vector<double>>(
+      "direction_deltas_deg.down", std::vector<double>{0.0, 0.0, 0.0, -5.0, 0.0, 0.0}));
+  }
+
+  void normalise_parameters()
   {
     if (!std::isfinite(marker_timeout_s_) || marker_timeout_s_ <= 0.0) {
       marker_timeout_s_ = 1.0;
@@ -139,27 +165,24 @@ private:
     }
     detection_window_frames_ = std::max(1, detection_window_frames_);
     required_detections_ = std::clamp(required_detections_, 1, detection_window_frames_);
-  }
-
-  void load_search_poses()
-  {
-    std::vector<std::string> pose_names = search_order_;
-    for (const auto & base_name : search_order_) {
-      for (const auto & suffix : local_pose_suffixes_) {
-        pose_names.push_back(base_name + "_" + suffix);
-      }
+    max_steps_ = std::max(1, max_steps_);
+    if (!std::isfinite(max_single_joint_step_deg_) || max_single_joint_step_deg_ <= 0.0) {
+      max_single_joint_step_deg_ = 8.0;
     }
-    std::sort(pose_names.begin(), pose_names.end());
-    pose_names.erase(std::unique(pose_names.begin(), pose_names.end()), pose_names.end());
+    max_single_joint_step_rad_ = max_single_joint_step_deg_ * M_PI / 180.0;
+    if (!std::isfinite(center_step_scale_) || center_step_scale_ <= 0.0) {
+      center_step_scale_ = 1.0;
+    }
 
-    for (const auto & name : pose_names) {
-      SearchPose pose;
-      pose.name = name;
-      pose.calibrated = declare_parameter<bool>("poses." + name + ".calibrated", false);
-      pose.camera_yaw_deg = declare_parameter<double>("poses." + name + ".camera_yaw_deg", 0.0);
-      pose.camera_pitch_deg = declare_parameter<double>("poses." + name + ".camera_pitch_deg", 0.0);
-      pose.joints = declare_parameter<std::vector<double>>("poses." + name + ".joints", std::vector<double>{});
-      poses_[name] = pose;
+    for (auto & [direction, delta] : direction_deltas_) {
+      if (!valid_delta(delta)) {
+        RCLCPP_WARN(get_logger(), "Invalid delta for direction '%s'; disabling it", direction.c_str());
+        delta.assign(kJointCount, 0.0);
+        continue;
+      }
+      for (auto & value : delta) {
+        value = std::clamp(value, -max_single_joint_step_rad_, max_single_joint_step_rad_);
+      }
     }
   }
 
@@ -218,95 +241,138 @@ private:
     return detections >= required_detections_;
   }
 
-  bool move_to_pose(
-    const SearchPose & pose,
+  std::optional<std::vector<double>> current_joint_values(std::string & message) const
+  {
+    if (!move_group_) {
+      message = "MoveIt interface is not ready";
+      return std::nullopt;
+    }
+    const auto values = move_group_->getCurrentJointValues();
+    if (values.size() != kJointCount) {
+      message = "MoveIt returned " + std::to_string(values.size()) +
+        " joints, expected " + std::to_string(kJointCount);
+      return std::nullopt;
+    }
+    if (!valid_delta(values)) {
+      message = "MoveIt current joint values are invalid";
+      return std::nullopt;
+    }
+    return values;
+  }
+
+  bool execute_joint_delta(
+    const std::vector<double> & delta,
     const bool execute,
+    const std::string & direction,
     std::string & stage,
     std::string & message)
   {
-    if (!pose.calibrated || !valid_joint_target(pose.joints)) {
-      stage = "search_pose_config";
-      message = "search pose '" + pose.name +
-        "' is not calibrated; capture six joint values in piper_x_search_poses.yaml";
+    if (!valid_delta(delta)) {
+      stage = "search_step_config";
+      message = "invalid search delta for direction '" + direction + "'";
       return false;
-    }
-    if (!execute) {
-      stage = "plan_only";
-      message = "search pose '" + pose.name + "' is calibrated; execute=false so no motion was commanded";
-      return true;
     }
     if (!move_group_) {
       stage = "moveit_unavailable";
       message = "MoveIt interface is not ready";
       return false;
     }
+    std::string joint_message;
+    auto current = current_joint_values(joint_message);
+    if (!current) {
+      stage = "moveit_state";
+      message = joint_message;
+      return false;
+    }
+    std::vector<double> target = *current;
+    for (std::size_t i = 0; i < kJointCount; ++i) {
+      target[i] += delta[i];
+    }
 
     move_group_->setStartStateToCurrentState();
-    move_group_->setJointValueTarget(pose.joints);
+    move_group_->setJointValueTarget(target);
     moveit::planning_interface::MoveGroupInterface::Plan plan;
     const auto plan_result = move_group_->plan(plan);
     if (plan_result != moveit::core::MoveItErrorCode::SUCCESS) {
       stage = "search_plan";
-      message = "MoveIt planning failed for search pose '" + pose.name + "'";
+      message = "MoveIt planning failed for reactive search direction '" + direction + "'";
       return false;
+    }
+    if (!execute) {
+      stage = "plan_only";
+      message = "reactive search direction '" + direction + "' planned; execute=false so no motion was commanded";
+      return true;
     }
     const auto execute_result = move_group_->execute(plan);
     if (execute_result != moveit::core::MoveItErrorCode::SUCCESS) {
       stage = "search_execution";
-      message = "MoveIt execution failed for search pose '" + pose.name + "'";
+      message = "MoveIt execution failed for reactive search direction '" + direction + "'";
       return false;
     }
+    for (std::size_t i = 0; i < kJointCount; ++i) {
+      cumulative_offset_[i] += delta[i];
+    }
     stage = "search_motion_complete";
-    message = "reached search pose '" + pose.name + "'";
+    message = "completed reactive search direction '" + direction + "'";
     return true;
   }
 
-  bool try_local_reacquisition(
-    const std::string & base_pose_name,
+  std::vector<double> center_delta(std::string & message) const
+  {
+    (void)message;
+    std::vector<double> delta(kJointCount, 0.0);
+    for (std::size_t i = 0; i < kJointCount; ++i) {
+      delta[i] = std::clamp(
+        -cumulative_offset_[i] * center_step_scale_,
+        -max_single_joint_step_rad_,
+        max_single_joint_step_rad_);
+    }
+    return delta;
+  }
+
+  bool perform_step(
+    const std::string & requested_direction,
     const bool execute,
-    int & poses_checked,
+    int & steps_used,
     std::string & found_at_pose,
     std::string & stage,
     std::string & message)
   {
-    if (!local_reacquisition_enabled_) {
-      return false;
-    }
-    for (const auto & suffix : local_pose_suffixes_) {
-      const auto pose_name = base_pose_name + "_" + suffix;
-      const auto pose_iter = poses_.find(pose_name);
-      if (pose_iter == poses_.end() || !pose_iter->second.calibrated) {
-        continue;
+    const auto direction = normalise_direction(requested_direction);
+    if (direction == "current") {
+      stage = "current_view";
+      message = "checked current camera view without motion";
+    } else {
+      std::vector<double> delta;
+      if (direction == "center") {
+        delta = center_delta(message);
+      } else {
+        const auto iter = direction_deltas_.find(direction);
+        if (iter == direction_deltas_.end()) {
+          stage = "search_direction";
+          message = "unsupported reactive search direction '" + requested_direction + "'";
+          return false;
+        }
+        delta = iter->second;
       }
-      if (!move_to_pose(pose_iter->second, execute, stage, message)) {
+      if (!execute_joint_delta(delta, execute, direction, stage, message)) {
         return false;
       }
-      poses_checked++;
+      steps_used++;
       rclcpp::sleep_for(std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::duration<double>(settle_time_s_)));
-      std::string confirmation_message;
-      if (confirm_marker(confirmation_message)) {
-        found_at_pose = pose_name;
-        stage = "complete";
-        message = "marker acquired at local search pose '" + pose_name + "'";
-        return true;
-      }
+    }
+
+    std::string confirmation_message;
+    if (marker_fresh() && confirm_marker(confirmation_message)) {
+      found_at_pose = direction == "current" ? "current_view" : "reactive_" + direction;
+      stage = "complete";
+      message = direction == "current" ?
+        "marker already visible in current camera view" :
+        "marker acquired after reactive search direction '" + direction + "'";
+      return true;
     }
     return false;
-  }
-
-  void return_to_center_if_configured()
-  {
-    if (!return_to_center_on_failure_) {
-      return;
-    }
-    const auto center_iter = poses_.find(search_center_pose_);
-    if (center_iter == poses_.end() || !center_iter->second.calibrated) {
-      return;
-    }
-    std::string stage;
-    std::string message;
-    (void)move_to_pose(center_iter->second, true, stage, message);
   }
 
   void handle_search(
@@ -320,66 +386,69 @@ private:
     response->found_at_pose = "";
     response->poses_checked = 0;
 
-    std::string confirmation_message;
-    if (marker_fresh() && confirm_marker(confirmation_message)) {
+    std::string found_at_pose;
+    std::string stage;
+    std::string message;
+    int steps_used = 0;
+
+    if (perform_step("current", false, steps_used, found_at_pose, stage, message)) {
       response->success = true;
       response->marker_found = true;
-      response->found_at_pose = "current_view";
-      response->stage = "complete";
-      response->message = "marker already visible in current camera view";
+      response->found_at_pose = found_at_pose;
+      response->stage = stage;
+      response->message = message;
+      response->poses_checked = steps_used;
       return;
     }
+
+    const auto direction = normalise_direction(request->direction);
+    const int requested_max_steps = request->max_steps > 0 ? request->max_steps : max_steps_;
+    const int step_limit = std::clamp(requested_max_steps, 1, max_steps_);
 
     if (!request->execute) {
       response->stage = "marker_not_found";
-      response->message = "marker is not visible in current view and execute=false prevents search motion";
+      response->message = "marker is not visible in current view and execute=false prevents reactive search motion";
+      response->poses_checked = 0;
       return;
     }
 
-    for (const auto & pose_name : search_order_) {
-      const auto pose_iter = poses_.find(pose_name);
-      if (pose_iter == poses_.end()) {
-        response->stage = "search_pose_config";
-        response->message = "search pose '" + pose_name + "' is missing from piper_x_search_poses.yaml";
-        return;
-      }
-
-      if (!move_to_pose(pose_iter->second, request->execute, response->stage, response->message)) {
-        return;
-      }
-      response->poses_checked++;
-      rclcpp::sleep_for(std::chrono::duration_cast<std::chrono::nanoseconds>(
-        std::chrono::duration<double>(settle_time_s_)));
-
-      if (confirm_marker(confirmation_message)) {
+    if (direction != "auto") {
+      const bool found = perform_step(
+        direction, true, steps_used, found_at_pose, response->stage, response->message);
+      response->poses_checked = steps_used;
+      if (found) {
         response->success = true;
         response->marker_found = true;
-        response->found_at_pose = pose_name;
-        response->stage = "complete";
-        response->message = "marker acquired at search pose '" + pose_name + "'";
+        response->found_at_pose = found_at_pose;
         return;
       }
+      if (response->stage == "search_motion_complete" || response->stage == "current_view" || response->stage == "plan_only") {
+        response->success = true;
+        response->stage = "step_complete";
+        response->message = "reactive search step completed; marker_not_found";
+      }
+      return;
+    }
 
-      if (confirmation_message != "marker detections 0/" + std::to_string(detection_window_frames_)) {
-        std::string found_at_pose;
-        if (try_local_reacquisition(
-            pose_name, request->execute, response->poses_checked, found_at_pose,
-            response->stage, response->message))
-        {
-          response->success = true;
-          response->marker_found = true;
-          response->found_at_pose = found_at_pose;
-          return;
-        }
-        if (response->stage != "complete" && response->stage != "search_motion_complete") {
-          return;
-        }
+    for (int step = 0; step < step_limit; ++step) {
+      const auto & next_direction = auto_sequence_.empty() ? std::string("left") : auto_sequence_[step % auto_sequence_.size()];
+      const bool found = perform_step(
+        next_direction, true, steps_used, found_at_pose, response->stage, response->message);
+      response->poses_checked = steps_used;
+      if (found) {
+        response->success = true;
+        response->marker_found = true;
+        response->found_at_pose = found_at_pose;
+        return;
+      }
+      if (response->stage != "search_motion_complete") {
+        return;
       }
     }
 
-    return_to_center_if_configured();
     response->stage = "search_complete";
-    response->message = "marker_not_found";
+    response->message = "marker_not_found after " + std::to_string(steps_used) + " reactive search steps";
+    response->poses_checked = steps_used;
   }
 
   std::string aruco_pose_topic_;
@@ -389,17 +458,18 @@ private:
   double settle_time_s_{};
   int detection_window_frames_{};
   int required_detections_{};
+  int max_steps_{};
   double velocity_scaling_{};
   double acceleration_scaling_{};
   double planning_time_{};
   int planning_attempts_{};
-  bool return_to_center_on_failure_{};
-  std::string search_center_pose_;
-  std::vector<std::string> search_order_;
-  bool local_reacquisition_enabled_{};
-  std::vector<std::string> local_pose_suffixes_;
+  double max_single_joint_step_deg_{};
+  double max_single_joint_step_rad_{};
+  double center_step_scale_{};
+  std::vector<std::string> auto_sequence_;
+  std::unordered_map<std::string, std::vector<double>> direction_deltas_;
+  std::vector<double> cumulative_offset_ = std::vector<double>(kJointCount, 0.0);
 
-  std::unordered_map<std::string, SearchPose> poses_;
   std::unique_ptr<moveit::planning_interface::MoveGroupInterface> move_group_;
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr marker_subscription_;
   rclcpp::Service<piper_x_aruco_wall_approach::srv::SearchMarker>::SharedPtr service_;

@@ -17,6 +17,7 @@ wrapped by a PiPER-X Agent Server:
 - lease: `POST /lease/acquire`, `POST /lease/release`
 - approach marker: `POST /tools/approach-marker`
 - geometric touch marker: `POST /tools/touch-marker`
+- reactive marker search: `POST /tools/search-step`, `POST /tools/search-marker`
 - go to saved home pose: `POST /tools/go-home`
 - save current pose as home: `POST /tools/save-home`
 - go to saved previous pose: `POST /tools/go-previous`
@@ -36,8 +37,8 @@ talk directly to CAN or expose arbitrary joint commands.
 - end effector: AgileX parallel gripper
 - effector launch argument: `effector_type:=agx_gripper`
 - firmware launch argument: `fw_version:=v189`
-- CAN interface: `can2`, 1 Mbps, configured before ROS launch. Override with
-  `can_port:=can0` if the arm is temporarily wired to `can0`.
+- CAN interface: `can2`, 1 Mbps, configured before ROS launch.
+- Bunker CAN interface: `can3`; Bunker movement is outside the PiPER-X marker-search primitive.
 - MoveIt planning group: `arm`
 - MoveIt TCP/tip link: `tcp_link`
 - TCP offset: `[0.0, 0.0, 0.1425, 0.0, 0.0, 0.0]`
@@ -48,7 +49,7 @@ talk directly to CAN or expose arbitrary joint commands.
 - gripper joint name: `gripper`
 - gripper opening width range: `[0.0, 0.1] m`
 - gripper effort range: `[0.5, 3.0] N`
-- wrist camera: Intel RealSense D435i
+- wrist camera: Intel RealSense D435i depth camera
 - color image: `/camera/camera/color/image_raw`
 - camera info: `/camera/camera/color/camera_info`
 - point cloud: `/camera/camera/depth/color/points`
@@ -56,6 +57,18 @@ talk directly to CAN or expose arbitrary joint commands.
 - marker: ID `6`, size `0.03 m`
 - hand-eye calibration file:
   `/home/dase-hw101/handeye/config/piper_x_d435i_eye_in_hand.json`
+
+## Reactive Marker Search
+
+The old calibrated 3x3 search-pose grid is replaced by bounded reactive search.
+OpenClaw may decide one direction at a time, but must call the Agent Server
+`/tools/search-step` endpoint. The robot layer executes only small configured
+MoveIt joint-delta primitives and stops as soon as marker 6 is visible.
+
+The only search-ending limit is `max_steps: 100`; there is no wall-clock search
+time limit.
+
+Allowed directions: `left`, `right`, `up`, `down`, `center`, `current`. Prefer `up` as the first step because marker 6 is usually mounted high; `up` is a bounded joint4 wrist-camera tilt.
 
 ## Official Source Boundary
 

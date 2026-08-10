@@ -1,4 +1,6 @@
 bool execute
+string direction
+int32 max_steps
 ---
 bool success
 bool marker_found

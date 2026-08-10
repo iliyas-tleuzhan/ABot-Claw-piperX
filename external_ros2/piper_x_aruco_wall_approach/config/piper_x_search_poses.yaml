@@ -1,8 +1,13 @@
-# PiPER-X marker-search configuration.
+# PiPER-X reactive marker-search configuration.
 #
-# The search component intentionally does not derive these joint targets from
-# the yaw/pitch metadata. Capture the real six-joint values on the physical
-# robot for each viewpoint, then set calibrated: true.
+# Search no longer depends on hardcoded 3x3 joint poses. OpenClaw or the
+# Agent Server requests one bounded search step at a time, and this ROS node
+# enforces the allowed directions and per-step joint deltas through MoveIt.
+#
+# Defaults:
+# - PiPER-X arm CAN: can2, configured by launch/driver layer.
+# - Marker: ArUco ID 6, size 0.03 m, configured by launch/API layer.
+# - Camera: RealSense D435i wrist camera, observed through /aruco_single/pose.
 search_marker_node:
   ros__parameters:
     aruco_pose_topic: /aruco_single/pose
@@ -12,82 +17,34 @@ search_marker_node:
     settle_time_s: 0.5
     detection_window_frames: 5
     required_detections: 3
+    max_steps: 100
     velocity_scaling: 0.10
     acceleration_scaling: 0.10
     planning_time: 10.0
     planning_attempts: 10
-    return_to_center_on_failure: true
-    search_center_pose: search_mid_center
-    search_order:
-      - search_mid_center
-      - search_mid_left
-      - search_up_left
-      - search_up_center
-      - search_up_right
-      - search_mid_right
-      - search_down_right
-      - search_down_center
-      - search_down_left
-    local_reacquisition:
-      enabled: true
-      step_deg: 5
-      max_offset_deg: 15
-      pose_suffixes:
-        - yaw_p5
-        - yaw_m5
-        - yaw_p10
-        - yaw_m10
-        - yaw_p15
-        - yaw_m15
-        - pitch_p5
-        - pitch_m5
-        - pitch_p10
-        - pitch_m10
-        - pitch_p15
-        - pitch_m15
-    poses:
-      search_mid_center:
-        calibrated: false
-        camera_yaw_deg: 0
-        camera_pitch_deg: 0
-        joints: []
-      search_mid_left:
-        calibrated: false
-        camera_yaw_deg: -25
-        camera_pitch_deg: 0
-        joints: []
-      search_up_left:
-        calibrated: false
-        camera_yaw_deg: -25
-        camera_pitch_deg: 15
-        joints: []
-      search_up_center:
-        calibrated: false
-        camera_yaw_deg: 0
-        camera_pitch_deg: 15
-        joints: []
-      search_up_right:
-        calibrated: false
-        camera_yaw_deg: 25
-        camera_pitch_deg: 15
-        joints: []
-      search_mid_right:
-        calibrated: false
-        camera_yaw_deg: 25
-        camera_pitch_deg: 0
-        joints: []
-      search_down_right:
-        calibrated: false
-        camera_yaw_deg: 25
-        camera_pitch_deg: -15
-        joints: []
-      search_down_center:
-        calibrated: false
-        camera_yaw_deg: 0
-        camera_pitch_deg: -15
-        joints: []
-      search_down_left:
-        calibrated: false
-        camera_yaw_deg: -25
-        camera_pitch_deg: -15
-        joints: []
+
+    # Hard safety cap for a single reactive step. Direction deltas larger than
+    # this are clamped before planning.
+    max_single_joint_step_deg: 8.0
+
+    # One step is intentionally small. OpenClaw may decide the next direction,
+    # but the robot layer only accepts these bounded primitives. Up/down use
+    # joint4 first so the wrist camera tilts toward high markers instead of
+    # only translating upward while still looking horizontally forward.
+    direction_deltas_deg:
+      left:  [5.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      right: [-5.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      up:    [0.0, 0.0, 0.0, 5.0, 0.0, 0.0]
+      down:  [0.0, 0.0, 0.0, -5.0, 0.0, 0.0]
+
+    # Used only when a legacy caller invokes search-marker with direction=auto.
+    # OpenClaw-directed search should prefer /tools/search-step.
+    auto_sequence:
+      - up
+      - up
+      - left
+      - right
+      - right
+      - left
+      - down
+      - down

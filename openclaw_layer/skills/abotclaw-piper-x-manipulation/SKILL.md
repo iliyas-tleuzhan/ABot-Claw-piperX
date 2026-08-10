@@ -15,8 +15,7 @@ workcell stack.
 - Arm launch argument: `arm_type:=piper_x`
 - End effector: `effector_type:=agx_gripper`
 - Firmware argument: `fw_version:=v189`
-- CAN: default `can2` at 1 Mbps. Use the ROS launch `can_port:=can0` override
-  only when the PiPER-X arm is temporarily wired to `can0`.
+- CAN: always `can2` at 1 Mbps for the PiPER-X arm.
 - MoveIt group: `arm`
 - MoveIt tip/TCP: `tcp_link`
 - TCP offset: `[0.0, 0.0, 0.1425, 0.0, 0.0, 0.0]`
@@ -25,12 +24,13 @@ workcell stack.
 - Gripper joint: `gripper`
 - Gripper width range: `[0.0, 0.1] m`
 - Gripper effort range: `[0.5, 3.0] N`
-- Wrist camera: Intel RealSense D435i
+- Wrist camera: Intel RealSense D435i depth camera
 - Point cloud: `/camera/camera/depth/color/points`
 - ArUco pose: `/aruco_single/pose`
-- Marker: ID `6`, size `0.10 m`
+- Marker: ID `6`, size `0.03 m`
 - PiPER-X Agent Server: `http://127.0.0.1:8893`
 - Low-level marker bridge: `http://127.0.0.1:8892`
+- Bunker CAN: always `can3`; do not move Bunker during PiPER-X marker search unless a separate Bunker controller is explicitly enabled.
 
 The Agent Server is under
 `robot_layer/arm_piper_x/agent_server`. It wraps the lower-level ROS 2 package
@@ -86,6 +86,36 @@ readiness are not required. Require:
 - `execution_allowed: true` for physical execution
 - a valid `/lease/acquire` lease for physical execution through the Agent
   Server
+
+
+## Reactive Marker Search
+
+The old 3x3 hardcoded search-pose grid is retired. Marker search is reactive:
+OpenClaw decides one camera-search direction at a time, and the PiPER-X robot
+layer executes only bounded MoveIt search primitives.
+
+Use this loop when marker 6 is not visible:
+
+1. Check `GET http://127.0.0.1:8893/health`.
+2. If `marker_visible: true`, stop searching and call `touch-marker` or
+   `approach-marker`.
+3. If marker is hidden, acquire a lease and call `/tools/search-step` once with
+   one of `left`, `right`, `up`, `down`, `center`, or `current`. Start with
+   `up` unless the latest camera evidence clearly suggests another direction.
+4. Re-check after every step.
+5. Stop immediately when marker 6 is found.
+6. Stop after 100 total search steps and report `marker_not_found`.
+
+Example one-step command:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8893/tools/search-step \
+  -H 'Content-Type: application/json' \
+  -d '{"execute":true,"lease_id":"<LEASE_ID>","direction":"up","max_steps":1}'
+```
+
+Do not generate raw joint, CAN, or arbitrary MoveIt commands. The robot layer
+clamps each search step and plans it through MoveIt.
 
 ## Routing
 

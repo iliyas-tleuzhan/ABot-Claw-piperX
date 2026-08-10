@@ -54,10 +54,24 @@ class FakeSdk:
             "success": True,
             "marker_found": True,
             "marker_id": 6,
-            "found_at_pose": "search_mid_center",
+            "found_at_pose": "reactive_up",
+            "steps_used": 1,
             "poses_checked": 1,
             "stage": "complete",
             "message": "marker acquired",
+        }
+
+    def search_step(self, payload):
+        self.calls.append(("search-step", payload))
+        return 200, {
+            "success": True,
+            "marker_found": False,
+            "marker_id": 6,
+            "found_at_pose": "",
+            "steps_used": 1,
+            "poses_checked": 1,
+            "stage": "step_complete",
+            "message": "reactive search step completed; marker_not_found",
         }
 
     def go_home(self, payload):
@@ -204,9 +218,24 @@ class PiperXAgentServerTest(unittest.TestCase):
         client, sdk, _env, _state = make_client()
         result = client.post("/tools/search-marker", json={"execute": False})
         self.assertEqual(result.status_code, 200)
-        self.assertEqual(result.json()["found_at_pose"], "search_mid_center")
+        self.assertEqual(result.json()["found_at_pose"], "reactive_up")
         self.assertEqual(sdk.calls[0][0], "search")
         self.assertFalse(sdk.calls[0][1]["execute"])
+
+    def test_search_step_proxies_one_direction(self):
+        client, sdk, _env, _state = make_client()
+        result = client.post("/tools/search-step", json={"execute": False, "direction": "up", "max_steps": 100})
+        self.assertEqual(result.status_code, 200)
+        self.assertFalse(result.json()["marker_found"])
+        self.assertEqual(sdk.calls[0][0], "search-step")
+        self.assertEqual(sdk.calls[0][1]["direction"], "up")
+        self.assertEqual(sdk.calls[0][1]["max_steps"], 1)
+
+    def test_search_step_rejects_auto_direction(self):
+        client, _sdk, _env, _state = make_client()
+        result = client.post("/tools/search-step", json={"execute": False, "direction": "auto"})
+        self.assertEqual(result.status_code, 400)
+        self.assertEqual(result.json()["detail"]["stage"], "request_validation")
 
     def test_search_marker_execute_requires_lease_when_gate_enabled(self):
         client, _sdk, _env, _state = make_client(execution_allowed=True)

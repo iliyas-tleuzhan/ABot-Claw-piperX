@@ -1,6 +1,6 @@
 ---
 name: piper-touch-marker
-description: Use the PiPER-X ROS 2 Agent Server for requests such as "touch the marker", "touch ArUco marker 6", "move the Piper arm to the marker", "approach the marker", "point at the marker", "press the marked location", "go home", "return the Piper arm home", "save current pose as home", "go back to the previous pose", "save current pose as previous", "open the gripper", or "close the gripper".
+description: Use the PiPER-X ROS 2 Agent Server for requests such as "touch the marker", "touch ArUco marker 6", "move the Piper arm to the marker", "approach the marker", "point at the marker", "press the marked location", "go home", "return the Piper arm home", "go back to the previous pose", "save current pose as previous", "open the gripper", or "close the gripper".
 ---
 
 # PiPER Touch Marker
@@ -28,32 +28,9 @@ curl -sS http://127.0.0.1:8893/health
 Physical execution requires `execution_allowed: true` and a lease from
 `POST /lease/acquire`.
 
-Health separates marker visibility from system readiness. A hidden marker can
-still be searchable when `system_ready: true`, `ready_for_search: true`,
-`marker_visible: false`, and `ready_for_approach: false`.
-
-For `touch` and `approach`, also require:
-
-- `ready_for_search: true`
-- `point_cloud_available: true`
-- `moveit_available: true`
-- `marker_task_service_available: true`
-- `joint_state_available: true`
-
-For `go-home` and `go-previous`, marker and point-cloud readiness are not
-required, but require:
-
-- `home_action_available: true`
-- `joint_state_available: true`
-
-For `save-home` and `save-previous`, require fresh joint state. These commands
-do not move the robot.
-
-For `open-gripper` and `close-gripper`, marker, point-cloud, and camera
-readiness are not required, but require:
-
-- `gripper_control.supported: true`
-- an active ROS 2 driver subscriber on `/control/joint_states`
+Health separates marker visibility from system readiness. If marker 6 is
+visible, direct `touch-marker`/`approach-marker` may run without search. If the
+marker is not visible, use reactive search steps through the Agent Server.
 
 For OpenClaw shell execution, prefer:
 
@@ -73,10 +50,30 @@ curl -sS -X POST http://127.0.0.1:8893/tools/approach-marker \
   -d '{"execute":true,"lease_id":"<LEASE_ID>","pre_clearance_m":0.05,"final_clearance_m":0.005,"retract_after":false,"retract_distance_m":0.05,"final_velocity_scaling":0.05,"return_home_after":false,"home_duration_s":6.0}'
 ```
 
-If marker `6` is not currently visible, `approach-marker` automatically runs the
-PiPER-X 3x3 wrist-camera search before handing control to the existing
-wall-plane approach pipeline. OpenClaw should not manually command individual
-look-left/look-up/look-right motions.
+If marker `6` is not currently visible, use reactive search instead of the old
+3x3 hardcoded pose grid. Prefer `up` as the first search step because the marker
+is usually mounted high. OpenClaw may choose the next direction, but must only
+call the bounded `/tools/search-step` endpoint. Do not publish raw joint, CAN,
+or MoveIt commands.
+
+Reactive search loop:
+
+1. Call `GET /health`.
+2. If `marker_visible: true`, call `touch-marker` or `approach-marker`.
+3. If marker is hidden, acquire a lease and call one search step. Start with `up` unless the latest camera evidence clearly suggests another direction.
+4. Re-check health/result after every step.
+5. Stop immediately when `marker_found: true` or `marker_visible: true`.
+6. Stop after `100` total steps and report `marker_not_found`.
+
+Search one step:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8893/tools/search-step \
+  -H 'Content-Type: application/json' \
+  -d '{"execute":true,"lease_id":"<LEASE_ID>","direction":"up","max_steps":1}'
+```
+
+Allowed directions are `left`, `right`, `up`, `down`, `center`, and `current`. The `up` step is implemented as a bounded joint4 wrist-camera tilt so the camera looks upward first.
 
 Touch marker directly:
 
@@ -141,10 +138,6 @@ curl -sS -X POST http://127.0.0.1:8893/tools/close-gripper \
 This skill targets PiPER-X through the Agent Server on `8893`, not the regular
 Piper Agent Server on `8888`. The Agent Server wraps the lower-level ROS 2
 marker bridge on `8892`.
-
-Use the Agent Server helper or tool endpoints only. Do not publish ROS gripper
-messages directly from OpenClaw, and do not retry physical commands
-automatically after a failed health or execution precheck.
 
 The previous pose is a saved six-joint snapshot. Physical marker and home
 commands save the current pose as previous before sending motion, and

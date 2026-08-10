@@ -24,6 +24,8 @@ class MarkerTaskRequest(BaseModel):
 class SearchMarkerRequest(BaseModel):
     execute: bool = False
     lease_id: Optional[str] = None
+    direction: str = Field(default="auto")
+    max_steps: int = Field(default=100)
 
 
 class HomeRequest(BaseModel):
@@ -173,6 +175,26 @@ def create_router(cfg, sdk, lease_mgr, state_monitor) -> APIRouter:
     def search_marker(req: SearchMarkerRequest):
         require_execution_allowed(req.execute, req.lease_id)
         status_code, result = sdk.search_marker(req.model_dump(exclude={"lease_id"}))
+        normalized = _normalize_marker_api_response(status_code, result)
+        if not normalized.get("success", False):
+            raise HTTPException(status_code=422 if status_code < 400 else status_code, detail=normalized)
+        return normalized
+
+    @router.post("/search-step")
+    def search_step(req: SearchMarkerRequest):
+        require_execution_allowed(req.execute, req.lease_id)
+        if not req.direction or req.direction.strip().lower() in {"auto", "reactive"}:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "success": False,
+                    "stage": "request_validation",
+                    "message": "search-step requires one direction: left, right, up, down, center, or current",
+                },
+            )
+        payload = req.model_dump(exclude={"lease_id"})
+        payload["max_steps"] = 1
+        status_code, result = sdk.search_step(payload)
         normalized = _normalize_marker_api_response(status_code, result)
         if not normalized.get("success", False):
             raise HTTPException(status_code=422 if status_code < 400 else status_code, detail=normalized)
