@@ -53,6 +53,18 @@ class FakeAdapter(api.RosMarkerTaskAdapter):
             raise self.exc
         return dict(self._result)
 
+    def ensure_arm_enabled(self):
+        self.calls.append(("enable-arm", None))
+        if self.delay_s:
+            time.sleep(self.delay_s)
+        if self.exc:
+            raise self.exc
+        return {
+            "success": True,
+            "stage": "arm_enabled",
+            "message": "Agx_arm enabled",
+        }
+
     def search_marker(self, request):
         self.calls.append(("search", request))
         if self.delay_s:
@@ -203,7 +215,7 @@ def test_execution_gate_allows_execute(monkeypatch):
     response = client(adapter).post("/tools/piper/touch-marker", json={"execute": True})
     assert response.status_code == 200
     assert response.json()["contact_confirmed"] is False
-    assert [call[0] for call in adapter.calls] == ["save-previous", "touch"]
+    assert [call[0] for call in adapter.calls] == ["enable-arm", "save-previous", "touch"]
 
 
 def test_bearer_token_required():
@@ -369,7 +381,7 @@ def test_marker_task_can_return_home_after_execution(monkeypatch):
     body = response.json()
     assert body["return_home_after"]["completion_type"] == "saved_home_pose"
     assert body["previous_pose_saved_before_motion"]["completion_type"] == "saved_previous_pose_update"
-    assert [call[0] for call in adapter.calls] == ["save-previous", "touch", "home"]
+    assert [call[0] for call in adapter.calls] == ["enable-arm", "save-previous", "touch", "home"]
 
 
 def test_execute_marker_task_saves_previous_before_motion(monkeypatch):
@@ -380,7 +392,7 @@ def test_execute_marker_task_saves_previous_before_motion(monkeypatch):
     response = client(adapter).post("/tools/piper/approach-marker", json={"execute": True})
     assert response.status_code == 200
     assert response.json()["previous_pose_saved_before_motion"]["completion_type"] == "saved_previous_pose_update"
-    assert [call[0] for call in adapter.calls] == ["save-previous", "approach"]
+    assert [call[0] for call in adapter.calls] == ["enable-arm", "save-previous", "approach"]
 
 
 def test_execute_home_saves_previous_before_motion(monkeypatch):
@@ -391,7 +403,7 @@ def test_execute_home_saves_previous_before_motion(monkeypatch):
     response = client(adapter).post("/tools/piper/go-home", json={"execute": True})
     assert response.status_code == 200
     assert response.json()["previous_pose_saved_before_motion"]["completion_type"] == "saved_previous_pose_update"
-    assert [call[0] for call in adapter.calls] == ["save-previous", "home"]
+    assert [call[0] for call in adapter.calls] == ["enable-arm", "save-previous", "home"]
 
 
 def test_home_execution_gate_blocks_execute(monkeypatch):

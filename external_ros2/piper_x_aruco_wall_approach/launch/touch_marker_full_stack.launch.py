@@ -180,6 +180,9 @@ def generate_launch_description():
                     "point_cloud_topic": point_cloud_topic,
                 },
             ],
+            remappings=[
+                ("joint_states", joint_state_topic),
+            ],
         ),
         Node(
             package="piper_x_aruco_wall_approach",
@@ -192,6 +195,9 @@ def generate_launch_description():
                     "aruco_pose_topic": "/aruco_single/pose",
                     "marker_id": ParameterValue(marker_id, value_type=int),
                 },
+            ],
+            remappings=[
+                ("joint_states", joint_state_topic),
             ],
         ),
         Node(

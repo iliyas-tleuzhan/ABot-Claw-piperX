@@ -12,6 +12,7 @@
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <moveit/move_group_interface/move_group_interface.h>
 #include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/msg/joint_state.hpp>
 
 #include "piper_x_aruco_wall_approach/srv/search_marker.hpp"
 
@@ -64,6 +65,18 @@ std::string normalise_direction(std::string direction)
   if (direction == "down") {
     return "down";
   }
+  if (direction == "upleft") {
+    return "up_left";
+  }
+  if (direction == "upright") {
+    return "up_right";
+  }
+  if (direction == "downleft") {
+    return "down_left";
+  }
+  if (direction == "downright") {
+    return "down_right";
+  }
   if (direction == "center" || direction == "centre") {
     return "center";
   }
@@ -78,9 +91,11 @@ public:
   : Node("search_marker_node")
   {
     aruco_pose_topic_ = declare_parameter<std::string>("aruco_pose_topic", "/aruco_single/pose");
+    joint_state_topic_ = declare_parameter<std::string>("joint_state_topic", "joint_states");
     planning_group_ = declare_parameter<std::string>("planning_group", "arm");
     marker_id_ = declare_parameter<int>("marker_id", 6);
     marker_timeout_s_ = declare_parameter<double>("marker_timeout_s", 1.0);
+    joint_state_timeout_s_ = declare_parameter<double>("joint_state_timeout_s", 1.0);
     settle_time_s_ = declare_parameter<double>("settle_time_s", 0.5);
     detection_window_frames_ = declare_parameter<int>("detection_window_frames", 5);
     required_detections_ = declare_parameter<int>("required_detections", 3);
@@ -93,7 +108,9 @@ public:
     center_step_scale_ = declare_parameter<double>("center_step_scale", 1.0);
     auto_sequence_ = declare_parameter<std::vector<std::string>>(
       "auto_sequence",
-      std::vector<std::string>{"up", "up", "left", "right", "right", "left", "down", "down"});
+      std::vector<std::string>{
+        "up", "left", "right", "right", "left",
+        "up", "right", "left", "left", "right"});
 
     load_direction_deltas();
     normalise_parameters();
@@ -105,6 +122,14 @@ public:
         last_marker_received_ = now();
         last_marker_header_stamp_s_ = stamp_to_seconds(*msg);
         marker_sequence_++;
+      });
+
+    joint_state_subscription_ = create_subscription<sensor_msgs::msg::JointState>(
+      joint_state_topic_, rclcpp::SensorDataQoS(),
+      [this](const sensor_msgs::msg::JointState::SharedPtr msg) {
+        std::lock_guard<std::mutex> lock(data_mutex_);
+        last_joint_received_ = now();
+        last_joint_state_ = *msg;
       });
 
     service_ = create_service<piper_x_aruco_wall_approach::srv::SearchMarker>(
@@ -153,12 +178,23 @@ private:
       "direction_deltas_deg.up", std::vector<double>{0.0, 0.0, 0.0, 5.0, 0.0, 0.0}));
     direction_deltas_["down"] = degrees_to_radians(declare_parameter<std::vector<double>>(
       "direction_deltas_deg.down", std::vector<double>{0.0, 0.0, 0.0, -5.0, 0.0, 0.0}));
+    direction_deltas_["up_left"] = degrees_to_radians(declare_parameter<std::vector<double>>(
+      "direction_deltas_deg.up_left", std::vector<double>{5.0, 0.0, 0.0, 5.0, 0.0, 0.0}));
+    direction_deltas_["up_right"] = degrees_to_radians(declare_parameter<std::vector<double>>(
+      "direction_deltas_deg.up_right", std::vector<double>{-5.0, 0.0, 0.0, 5.0, 0.0, 0.0}));
+    direction_deltas_["down_left"] = degrees_to_radians(declare_parameter<std::vector<double>>(
+      "direction_deltas_deg.down_left", std::vector<double>{5.0, 0.0, 0.0, -5.0, 0.0, 0.0}));
+    direction_deltas_["down_right"] = degrees_to_radians(declare_parameter<std::vector<double>>(
+      "direction_deltas_deg.down_right", std::vector<double>{-5.0, 0.0, 0.0, -5.0, 0.0, 0.0}));
   }
 
   void normalise_parameters()
   {
     if (!std::isfinite(marker_timeout_s_) || marker_timeout_s_ <= 0.0) {
       marker_timeout_s_ = 1.0;
+    }
+    if (!std::isfinite(joint_state_timeout_s_) || joint_state_timeout_s_ <= 0.0) {
+      joint_state_timeout_s_ = 1.0;
     }
     if (!std::isfinite(settle_time_s_) || settle_time_s_ < 0.0) {
       settle_time_s_ = 0.5;
@@ -241,20 +277,53 @@ private:
     return detections >= required_detections_;
   }
 
-  std::optional<std::vector<double>> current_joint_values(std::string & message) const
+  std::optional<std::vector<double>> current_joint_values(std::string & message)
   {
     if (!move_group_) {
       message = "MoveIt interface is not ready";
       return std::nullopt;
     }
-    const auto values = move_group_->getCurrentJointValues();
-    if (values.size() != kJointCount) {
-      message = "MoveIt returned " + std::to_string(values.size()) +
-        " joints, expected " + std::to_string(kJointCount);
+    const auto joint_names = move_group_->getJointNames();
+    if (joint_names.size() != kJointCount) {
+      message = "MoveIt returned " + std::to_string(joint_names.size()) +
+        " joint names, expected " + std::to_string(kJointCount);
       return std::nullopt;
     }
+
+    sensor_msgs::msg::JointState joint_state;
+    {
+      std::lock_guard<std::mutex> lock(data_mutex_);
+      if (!last_joint_received_) {
+        message = "No joint state received on " + joint_state_topic_;
+        return std::nullopt;
+      }
+      const double age_s = (now() - *last_joint_received_).seconds();
+      if (age_s > joint_state_timeout_s_) {
+        message = "Joint state on " + joint_state_topic_ + " is stale";
+        return std::nullopt;
+      }
+      joint_state = *last_joint_state_;
+    }
+
+    if (joint_state.name.empty() || joint_state.position.size() < joint_state.name.size()) {
+      message = "Joint state on " + joint_state_topic_ + " has invalid name/position fields";
+      return std::nullopt;
+    }
+
+    std::vector<double> values;
+    values.reserve(joint_names.size());
+    for (const auto & joint_name : joint_names) {
+      auto iter = std::find(joint_state.name.begin(), joint_state.name.end(), joint_name);
+      if (iter == joint_state.name.end()) {
+        message = "Joint state on " + joint_state_topic_ + " does not contain " + joint_name;
+        return std::nullopt;
+      }
+      const auto index = static_cast<std::size_t>(std::distance(joint_state.name.begin(), iter));
+      values.push_back(joint_state.position[index]);
+    }
+
     if (!valid_delta(values)) {
-      message = "MoveIt current joint values are invalid";
+      message = "Joint state on " + joint_state_topic_ + " contains invalid joint values";
       return std::nullopt;
     }
     return values;
@@ -452,9 +521,11 @@ private:
   }
 
   std::string aruco_pose_topic_;
+  std::string joint_state_topic_;
   std::string planning_group_;
   int marker_id_{};
   double marker_timeout_s_{};
+  double joint_state_timeout_s_{};
   double settle_time_s_{};
   int detection_window_frames_{};
   int required_detections_{};
@@ -472,6 +543,7 @@ private:
 
   std::unique_ptr<moveit::planning_interface::MoveGroupInterface> move_group_;
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr marker_subscription_;
+  rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_subscription_;
   rclcpp::Service<piper_x_aruco_wall_approach::srv::SearchMarker>::SharedPtr service_;
 
   mutable std::mutex data_mutex_;
@@ -479,6 +551,8 @@ private:
   std::optional<rclcpp::Time> last_marker_received_;
   std::optional<double> last_marker_header_stamp_s_;
   uint64_t marker_sequence_{0};
+  std::optional<rclcpp::Time> last_joint_received_;
+  std::optional<sensor_msgs::msg::JointState> last_joint_state_;
 };
 
 int main(int argc, char ** argv)

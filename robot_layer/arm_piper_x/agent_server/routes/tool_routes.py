@@ -189,7 +189,10 @@ def create_router(cfg, sdk, lease_mgr, state_monitor) -> APIRouter:
                 detail={
                     "success": False,
                     "stage": "request_validation",
-                    "message": "search-step requires one direction: left, right, up, down, center, or current",
+                    "message": (
+                        "search-step requires one direction: left, right, up, down, "
+                        "up_left, up_right, down_left, down_right, center, or current"
+                    ),
                 },
             )
         payload = req.model_dump(exclude={"lease_id"})

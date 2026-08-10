@@ -20,6 +20,7 @@ from rclpy.action import ActionClient
 from rclpy.node import Node
 from sensor_msgs.msg import JointState, PointCloud2
 from geometry_msgs.msg import PoseStamped
+from std_srvs.srv import SetBool
 from trajectory_msgs.msg import JointTrajectoryPoint
 import uvicorn
 
@@ -148,6 +149,9 @@ class RosMarkerTaskAdapter:
     def run_task(self, mode: str, request: MarkerTaskRequest) -> Dict[str, Any]:
         raise NotImplementedError
 
+    def ensure_arm_enabled(self) -> Dict[str, Any]:
+        raise NotImplementedError
+
     def search_marker(self, request: SearchMarkerRequest) -> Dict[str, Any]:
         raise NotImplementedError
 
@@ -204,6 +208,7 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         self._lock = threading.Lock()
         self._client = self.create_client(RunMarkerTask, "/run_marker_task")
         self._search_client = self.create_client(SearchMarker, "/search_marker")
+        self._enable_client = self.create_client(SetBool, "/enable_agx_arm")
         self._home_client = ActionClient(
             self,
             FollowJointTrajectory,
@@ -382,6 +387,29 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
             "message": str(response.message),
             "contact_confirmed": bool(response.contact_confirmed),
             "completion_type": str(response.completion_type),
+        }
+
+    def ensure_arm_enabled(self) -> Dict[str, Any]:
+        if not self._enable_client.wait_for_service(timeout_sec=1.0):
+            raise RuntimeError("ROS service /enable_agx_arm is not available")
+
+        service_request = SetBool.Request()
+        service_request.data = True
+        future = self._enable_client.call_async(service_request)
+        deadline = time.monotonic() + 10.0
+        while rclpy.ok() and not future.done() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if not future.done():
+            raise TimeoutError("timed out waiting for /enable_agx_arm response")
+        response = future.result()
+        if response is None:
+            raise RuntimeError("ROS service /enable_agx_arm returned no response")
+        if not bool(response.success):
+            raise RuntimeError(f"failed to enable PiPER-X arm: {response.message}")
+        return {
+            "success": True,
+            "stage": "arm_enabled",
+            "message": str(response.message),
         }
 
     def search_marker(self, request: SearchMarkerRequest) -> Dict[str, Any]:
@@ -598,6 +626,9 @@ class FakeUnavailableAdapter(RosMarkerTaskAdapter):
     def run_task(self, mode: str, request: MarkerTaskRequest) -> Dict[str, Any]:
         raise RuntimeError("ROS adapter not initialized")
 
+    def ensure_arm_enabled(self) -> Dict[str, Any]:
+        raise RuntimeError("ROS adapter not initialized")
+
     def search_marker(self, request: SearchMarkerRequest) -> Dict[str, Any]:
         raise RuntimeError("ROS adapter not initialized")
 
@@ -698,6 +729,7 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
         if not command_lock.acquire(blocking=False):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="another PiPER marker task is active")
         try:
+            arm_enable_result = adapter.ensure_arm_enabled() if request.execute else None
             search_result = None
             if not health_snapshot.marker_pose_available:
                 require_search_readiness(health_snapshot)
@@ -723,6 +755,8 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
             result = adapter.run_task(mode, request)
             if search_result is not None and "search_result" not in result:
                 result["search_result"] = search_result
+            if arm_enable_result is not None:
+                result["arm_enable"] = arm_enable_result
             if previous_saved is not None:
                 result["previous_pose_saved_before_motion"] = previous_saved
             if result.get("success", False) and request.execute and request.return_home_after:
@@ -761,6 +795,8 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
         if not command_lock.acquire(blocking=False):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="another PiPER marker task is active")
         try:
+            if request.execute:
+                adapter.ensure_arm_enabled()
             result = adapter.search_marker(request)
         except HTTPException:
             raise
@@ -824,8 +860,11 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
         if not command_lock.acquire(blocking=False):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="another PiPER marker task is active")
         try:
+            arm_enable_result = adapter.ensure_arm_enabled() if request.execute else None
             previous_saved = adapter.save_previous() if request.execute else None
             result = adapter.go_home(request)
+            if arm_enable_result is not None:
+                result["arm_enable"] = arm_enable_result
             if previous_saved is not None:
                 result["previous_pose_saved_before_motion"] = previous_saved
         except TimeoutError as exc:
@@ -854,7 +893,10 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
         if not command_lock.acquire(blocking=False):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="another PiPER marker task is active")
         try:
+            arm_enable_result = adapter.ensure_arm_enabled() if request.execute else None
             result = adapter.go_previous(request)
+            if arm_enable_result is not None:
+                result["arm_enable"] = arm_enable_result
         except TimeoutError as exc:
             raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail=str(exc)) from exc
         except Exception as exc:
@@ -894,7 +936,10 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
         if not request.direction or request.direction.strip().lower() in {"auto", "reactive"}:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="search-step requires one direction: left, right, up, down, center, or current",
+                detail=(
+                    "search-step requires one direction: left, right, up, down, "
+                    "up_left, up_right, down_left, down_right, center, or current"
+                ),
             )
         step_request = SearchMarkerRequest(
             execute=request.execute,

@@ -52,9 +52,11 @@ curl -sS -X POST http://127.0.0.1:8893/tools/approach-marker \
 
 If marker `6` is not currently visible, use reactive search instead of the old
 3x3 hardcoded pose grid. Prefer `up` as the first search step because the marker
-is usually mounted high. OpenClaw may choose the next direction, but must only
-call the bounded `/tools/search-step` endpoint. Do not publish raw joint, CAN,
-or MoveIt commands.
+is usually mounted high. Search steps are intentionally large enough to reveal a
+new camera area; do not alternate immediately back and forth across the same
+viewpoint. OpenClaw may choose the next direction, but must only call the
+bounded `/tools/search-step` endpoint. Do not publish raw joint, CAN, or MoveIt
+commands.
 
 Reactive search loop:
 
@@ -65,6 +67,18 @@ Reactive search loop:
 5. Stop immediately when `marker_found: true` or `marker_visible: true`.
 6. Stop after `100` total steps and report `marker_not_found`.
 
+Preferred sweep when there is no camera evidence:
+
+```text
+up -> left -> right -> right -> left
+up -> right -> left -> left -> right
+```
+
+This means: move the camera upward, scan left and right at that higher angle,
+then move upward again and scan left and right again. Do not move down or
+recenter during search unless the camera evidence specifically supports that
+choice.
+
 Search one step:
 
 ```bash
@@ -73,7 +87,7 @@ curl -sS -X POST http://127.0.0.1:8893/tools/search-step \
   -d '{"execute":true,"lease_id":"<LEASE_ID>","direction":"up","max_steps":1}'
 ```
 
-Allowed directions are `left`, `right`, `up`, `down`, `center`, and `current`. The `up` step is implemented as a bounded joint4 wrist-camera tilt so the camera looks upward first.
+Allowed directions are `left`, `right`, `up`, `down`, `up_left`, `up_right`, `down_left`, `down_right`, `center`, and `current`. The `up` step is implemented as a bounded joint4 wrist-camera tilt so the camera looks upward first.
 
 Touch marker directly:
 

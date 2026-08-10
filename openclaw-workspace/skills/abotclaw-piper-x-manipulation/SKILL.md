@@ -92,7 +92,9 @@ readiness are not required. Require:
 
 The old 3x3 hardcoded search-pose grid is retired. Marker search is reactive:
 OpenClaw decides one camera-search direction at a time, and the PiPER-X robot
-layer executes only bounded MoveIt search primitives.
+layer executes only bounded MoveIt search primitives. Search steps are sized to
+show a meaningfully new camera view, so do not alternate immediately back and
+forth across the same viewpoint.
 
 Use this loop when marker 6 is not visible:
 
@@ -100,11 +102,24 @@ Use this loop when marker 6 is not visible:
 2. If `marker_visible: true`, stop searching and call `touch-marker` or
    `approach-marker`.
 3. If marker is hidden, acquire a lease and call `/tools/search-step` once with
-   one of `left`, `right`, `up`, `down`, `center`, or `current`. Start with
-   `up` unless the latest camera evidence clearly suggests another direction.
+   one of `left`, `right`, `up`, `down`, `up_left`, `up_right`, `down_left`,
+   `down_right`, `center`, or `current`. Start with `up` unless the latest
+   camera evidence clearly suggests another direction.
 4. Re-check after every step.
 5. Stop immediately when marker 6 is found.
 6. Stop after 100 total search steps and report `marker_not_found`.
+
+Preferred sweep when there is no camera evidence:
+
+```text
+up -> left -> right -> right -> left
+up -> right -> left -> left -> right
+```
+
+This means: move the camera upward, scan left and right at that higher angle,
+then move upward again and scan left and right again. Do not move down or
+recenter during search unless the camera evidence specifically supports that
+choice.
 
 Example one-step command:
 

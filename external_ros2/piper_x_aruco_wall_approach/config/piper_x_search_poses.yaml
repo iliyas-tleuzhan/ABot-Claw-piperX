@@ -25,26 +25,34 @@ search_marker_node:
 
     # Hard safety cap for a single reactive step. Direction deltas larger than
     # this are clamped before planning.
-    max_single_joint_step_deg: 8.0
+    max_single_joint_step_deg: 15.0
 
-    # One step is intentionally small. OpenClaw may decide the next direction,
-    # but the robot layer only accepts these bounded primitives. Up/down use
-    # joint4 first so the wrist camera tilts toward high markers instead of
-    # only translating upward while still looking horizontally forward.
+    # Each step should noticeably change the camera view. OpenClaw may decide
+    # the next direction, but the robot layer only accepts these bounded
+    # primitives. Up/down use joint4 first so the wrist camera tilts toward high
+    # markers instead of only translating upward while still looking forward.
     direction_deltas_deg:
-      left:  [5.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-      right: [-5.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-      up:    [0.0, 0.0, 0.0, 5.0, 0.0, 0.0]
-      down:  [0.0, 0.0, 0.0, -5.0, 0.0, 0.0]
+      left:       [12.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      right:      [-12.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      up:         [0.0, 0.0, 0.0, 12.0, 0.0, 0.0]
+      down:       [0.0, 0.0, 0.0, -12.0, 0.0, 0.0]
+      up_left:    [10.0, 0.0, 0.0, 10.0, 0.0, 0.0]
+      up_right:   [-10.0, 0.0, 0.0, 10.0, 0.0, 0.0]
+      down_left:  [10.0, 0.0, 0.0, -10.0, 0.0, 0.0]
+      down_right: [-10.0, 0.0, 0.0, -10.0, 0.0, 0.0]
 
     # Used only when a legacy caller invokes search-marker with direction=auto.
-    # OpenClaw-directed search should prefer /tools/search-step.
+    # OpenClaw-directed search should prefer /tools/search-step. The default
+    # pattern climbs, scans left/right at that new pitch, then climbs again.
+    # It intentionally does not move down or recenter unless explicitly asked.
     auto_sequence:
       - up
+      - left
+      - right
+      - right
+      - left
       - up
-      - left
-      - right
       - right
       - left
-      - down
-      - down
+      - left
+      - right
