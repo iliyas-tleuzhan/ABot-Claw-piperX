@@ -284,7 +284,7 @@ Structured service:
 
 ```bash
 ros2 service call /run_marker_task piper_x_aruco_wall_approach/srv/RunMarkerTask \
-  "{mode: approach, execute: false, pre_clearance_m: 0.05, final_clearance_m: 0.005, retract_distance_m: 0.05, final_velocity_scaling: 0.05, retract_after: false}"
+  "{mode: approach, execute: false, pre_clearance_m: 0.05, final_clearance_m: 0.005, retract_distance_m: 0.05, final_velocity_scaling: 0.12, retract_after: false}"
 ```
 
 Published targets:

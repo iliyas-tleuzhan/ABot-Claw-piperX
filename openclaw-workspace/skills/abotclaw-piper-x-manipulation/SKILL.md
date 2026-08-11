@@ -1,6 +1,6 @@
 ---
 name: abotclaw-piper-x-manipulation
-description: Route PiPER-X marker, home-pose, previous-pose, and gripper commands through the PiPER-X Agent Server on 127.0.0.1:8893. Use when the user asks the PiPER-X arm to approach/touch ArUco marker 6, press the marked location, go home, go back to the previous pose, save the current pose as home or previous, open the gripper, or close the gripper.
+description: Route PiPER-X marker, home-pose, previous-pose, found-marker-pose, search, and gripper commands through the PiPER-X Agent Server on 127.0.0.1:8893. Use when the user asks the PiPER-X arm to search for the marker, look for the marker, find the marker, approach/touch ArUco marker 6, press the marked location, open the door, activate the door button, press the door button, trigger the door sensor, go home, go back to the previous pose, move to the found marker pose, save the current pose as home or previous, open the gripper, or close the gripper.
 ---
 
 # AbotClaw PiPER-X Manipulation
@@ -132,6 +132,21 @@ curl -sS -X POST http://127.0.0.1:8893/tools/search-step \
 Do not generate raw joint, CAN, or arbitrary MoveIt commands. The robot layer
 clamps each search step and plans it through MoveIt.
 
+For "search for the marker", "look for the marker", "find the marker", "locate
+the marker", or "search", run the full search flow:
+
+```bash
+cd /home/dase-hw101/ABot-Claw &&
+python3 robot_layer/arm_piper_x/agent_server/run_piper_x_agent_task.py \
+  search \
+  --execute
+```
+
+If the result has `marker_found: true`, the low-level bridge saves the current
+six-joint pose as `found_marker` and leaves the arm at that pose. Tell the user:
+"Found marker 6 and saved the current pose as found_marker." Then the user can
+ask to "move to the found marker pose" or "run touch".
+
 ## Routing
 
 For "approach the marker", "point at the marker", or "move to the marker":
@@ -143,9 +158,12 @@ python3 robot_layer/arm_piper_x/agent_server/run_piper_x_agent_task.py \
   --execute
 ```
 
-For "touch the marker" or "press the marked location", use the geometric touch
-flow. It moves to pre-touch, performs a slow final approach, retracts, then
-returns to saved home:
+For "touch the marker", "press the marked location", "open the door", "open
+door", "activate the door button", "press the door button", "trigger the door
+sensor", or "wave at the door sensor", use the geometric touch flow. These door
+phrases are aliases for `touch`; do not create a separate door-opening motion.
+It moves to pre-touch, performs the final approach, retracts, then returns to
+saved home:
 
 ```bash
 cd /home/dase-hw101/ABot-Claw &&
@@ -171,6 +189,16 @@ For "go back to previous pose", "return to the previous pose", or "move back":
 cd /home/dase-hw101/ABot-Claw &&
 python3 robot_layer/arm_piper_x/agent_server/run_piper_x_agent_task.py \
   previous \
+  --execute
+```
+
+For "move to the found marker pose", "go to saved marker position", or "return
+to detected marker pose":
+
+```bash
+cd /home/dase-hw101/ABot-Claw &&
+python3 robot_layer/arm_piper_x/agent_server/run_piper_x_agent_task.py \
+  found-marker \
   --execute
 ```
 
@@ -217,6 +245,8 @@ Use `scripts/piper_x_marker_task.py` to classify language into one of:
 - `home`
 - `save-home`
 - `previous`
+- `found-marker`
+- `search`
 - `save-previous`
 - `open-gripper`
 - `close-gripper`

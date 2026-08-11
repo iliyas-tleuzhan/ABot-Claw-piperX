@@ -39,6 +39,10 @@ def test_touch_marker_full_stack_launch_loads():
         getattr(entity, "_Node__node_executable", None): getattr(entity, "_Node__remappings", [])
         for entity in description.entities
     }
+    node_parameters = {
+        getattr(entity, "_Node__node_executable", None): getattr(entity, "_Node__parameters", [])
+        for entity in description.entities
+    }
     assert "SetEnvironmentVariable" in entity_types
     assert "wall_approach_node" in node_executables
     assert "search_marker_node" in node_executables
@@ -51,3 +55,14 @@ def test_touch_marker_full_stack_launch_loads():
         (substitution_text(src), substitution_text(dst))
         for src, dst in node_remappings["search_marker_node"]
     ]
+    search_marker_inline_params = [
+        param
+        for param in node_parameters["search_marker_node"]
+        if isinstance(param, dict)
+    ]
+    assert any(
+        substitution_text(key) == "joint_state_topic"
+        and substitution_text(value) == "joint_state_topic"
+        for params in search_marker_inline_params
+        for key, value in params.items()
+    )

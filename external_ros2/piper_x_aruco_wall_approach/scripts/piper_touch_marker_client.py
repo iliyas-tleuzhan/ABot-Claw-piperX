@@ -77,7 +77,7 @@ def main():
         task.add_argument("--final-clearance", type=float, default=0.005)
         task.add_argument("--retract", action="store_true")
         task.add_argument("--retract-distance", type=float, default=0.05)
-        task.add_argument("--final-velocity-scaling", type=float, default=0.05)
+        task.add_argument("--final-velocity-scaling", type=float, default=0.12)
         task.add_argument("--return-home-after", action="store_true")
         task.add_argument("--home-duration", type=float, default=6.0)
 

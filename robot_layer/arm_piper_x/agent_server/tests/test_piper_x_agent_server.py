@@ -90,6 +90,14 @@ class FakeSdk:
         self.calls.append(("save-previous", {}))
         return 200, {"success": True, "stage": "complete", "message": "previous saved"}
 
+    def go_found_marker(self, payload):
+        self.calls.append(("found-marker", payload))
+        return 200, {"success": True, "stage": "complete", "message": "found marker pose ok"}
+
+    def save_found_marker(self):
+        self.calls.append(("save-found-marker", {}))
+        return 200, {"success": True, "stage": "complete", "message": "found marker pose saved"}
+
     def validate_pose_payload(self, payload):
         return True, "ok"
 
@@ -287,6 +295,28 @@ class PiperXAgentServerTest(unittest.TestCase):
         result = client.post("/tools/save-previous", json={})
         self.assertEqual(result.status_code, 200)
         self.assertEqual(sdk.calls[0][0], "save-previous")
+
+    def test_plan_only_found_marker_does_not_require_lease(self):
+        client, sdk, _env, _state = make_client()
+        result = client.post("/tools/go-found-marker", json={"execute": False})
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(sdk.calls[0][0], "found-marker")
+        self.assertFalse(sdk.calls[0][1]["execute"])
+
+    def test_found_marker_execute_with_lease_proxies(self):
+        client, sdk, _env, _state = make_client(execution_allowed=True)
+        with patch.dict(os.environ, {"PIPER_X_AGENT_ALLOW_EXECUTION": "1"}):
+            lease = client.post("/lease/acquire", json={"holder": "test"}).json()["lease_id"]
+            result = client.post("/tools/go-found-marker", json={"execute": True, "lease_id": lease})
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(sdk.calls[0][0], "found-marker")
+        self.assertNotIn("lease_id", sdk.calls[0][1])
+
+    def test_save_found_marker_proxies_without_execution_lease(self):
+        client, sdk, _env, _state = make_client()
+        result = client.post("/tools/save-found-marker", json={})
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(sdk.calls[0][0], "save-found-marker")
 
     def test_open_gripper_plan_only_reports_command_without_publish(self):
         client, _sdk, _env, state = make_client()

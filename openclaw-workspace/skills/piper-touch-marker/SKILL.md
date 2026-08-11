@@ -1,6 +1,6 @@
 ---
 name: piper-touch-marker
-description: Use the PiPER-X ROS 2 Agent Server for requests such as "touch the marker", "touch ArUco marker 6", "move the Piper arm to the marker", "approach the marker", "point at the marker", "press the marked location", "go home", "return the Piper arm home", "go back to the previous pose", "save current pose as previous", "open the gripper", or "close the gripper".
+description: Use the PiPER-X ROS 2 Agent Server for requests such as "search for the marker", "look for the marker", "find the marker", "touch the marker", "touch ArUco marker 6", "move the Piper arm to the marker", "approach the marker", "point at the marker", "press the marked location", "open the door", "open door", "activate the door button", "press the door button", "go home", "return the Piper arm home", "go back to the previous pose", "move to the found marker pose", "save current pose as previous", "open the gripper", or "close the gripper".
 ---
 
 # PiPER Touch Marker
@@ -47,7 +47,7 @@ Approach marker:
 ```bash
 curl -sS -X POST http://127.0.0.1:8893/tools/approach-marker \
   -H 'Content-Type: application/json' \
-  -d '{"execute":true,"lease_id":"<LEASE_ID>","pre_clearance_m":0.05,"final_clearance_m":0.005,"retract_after":false,"retract_distance_m":0.05,"final_velocity_scaling":0.05,"return_home_after":false,"home_duration_s":6.0}'
+  -d '{"execute":true,"lease_id":"<LEASE_ID>","pre_clearance_m":0.05,"final_clearance_m":0.005,"retract_after":false,"retract_distance_m":0.05,"final_velocity_scaling":0.12,"return_home_after":false,"home_duration_s":6.0}'
 ```
 
 If marker `6` is not currently visible, use reactive search instead of the old
@@ -89,12 +89,42 @@ curl -sS -X POST http://127.0.0.1:8893/tools/search-step \
 
 Allowed directions are `left`, `right`, `up`, `down`, `up_left`, `up_right`, `down_left`, `down_right`, `center`, and `current`. The `up` step is implemented as a bounded joint4 wrist-camera tilt so the camera looks upward first.
 
+Search for marker:
+
+Phrases such as "search for the marker", "look for the marker", "find the
+marker", "locate the marker", and "search" route to the search flow. If marker
+6 is found, the arm stays at the pose where it found the marker and the API
+saves the current six-joint pose as `found_marker`.
+
+```bash
+curl -sS -X POST http://127.0.0.1:8893/tools/search-marker \
+  -H 'Content-Type: application/json' \
+  -d '{"execute":true,"lease_id":"<LEASE_ID>"}'
+```
+
+When this succeeds, tell the user: "Found marker 6 and saved the current pose
+as found_marker." The next useful user commands are "move to the found marker
+pose" and "run touch".
+
+Move to found marker pose:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8893/tools/go-found-marker \
+  -H 'Content-Type: application/json' \
+  -d '{"execute":true,"lease_id":"<LEASE_ID>","duration_s":6.0}'
+```
+
 Touch marker directly:
+
+Door-opening phrases such as "open the door", "open door", "activate the door
+button", "press the door button", "trigger the door sensor", and "wave at the
+door sensor" are aliases for the same `touch-marker` command. Do not create a
+separate door-opening motion; use the existing marker search and touch flow.
 
 ```bash
 curl -sS -X POST http://127.0.0.1:8893/tools/touch-marker \
   -H 'Content-Type: application/json' \
-  -d '{"execute":true,"lease_id":"<LEASE_ID>","pre_clearance_m":0.05,"final_clearance_m":0.005,"retract_after":false,"retract_distance_m":0.05,"final_velocity_scaling":0.05,"return_home_after":false,"home_duration_s":6.0}'
+  -d '{"execute":true,"lease_id":"<LEASE_ID>","pre_clearance_m":0.05,"final_clearance_m":0.005,"retract_after":false,"retract_distance_m":0.05,"final_velocity_scaling":0.12,"return_home_after":false,"home_duration_s":6.0}'
 ```
 
 The touch planner targets the `tcp_link` contact point at the ArUco marker center using one MoveIt plan from the current robot state. The ROS 2 stack prefers elbow/wrist motion by keeping `joint1` near its current angle during planning.

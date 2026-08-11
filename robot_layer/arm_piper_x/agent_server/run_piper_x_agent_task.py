@@ -79,6 +79,7 @@ def command_needs_lease(args: argparse.Namespace) -> bool:
         "search",
         "home",
         "previous",
+        "found-marker",
         "open-gripper",
         "close-gripper",
     }
@@ -105,7 +106,7 @@ def main() -> int:
         task.add_argument("--final-clearance", type=float, default=0.005)
         task.add_argument("--retract", action="store_true")
         task.add_argument("--retract-distance", type=float, default=0.05)
-        task.add_argument("--final-velocity-scaling", type=float, default=0.05)
+        task.add_argument("--final-velocity-scaling", type=float, default=0.12)
         task.add_argument("--return-home-after", action="store_true")
         task.add_argument("--home-duration", type=float, default=6.0)
 
@@ -124,6 +125,11 @@ def main() -> int:
     previous.add_argument("--plan-only", action="store_true")
     previous.add_argument("--lease-id")
     previous.add_argument("--duration", type=float, default=6.0)
+    found_marker = subparsers.add_parser("found-marker")
+    found_marker.add_argument("--execute", action="store_true")
+    found_marker.add_argument("--plan-only", action="store_true")
+    found_marker.add_argument("--lease-id")
+    found_marker.add_argument("--duration", type=float, default=6.0)
     save_home = subparsers.add_parser("save-home")
     save_home.add_argument("--pose-name", default="home")
     subparsers.add_parser("save-previous")
@@ -175,6 +181,14 @@ def main() -> int:
                 *request_json(
                     "POST",
                     f"{base_url}/tools/go-previous",
+                    {"execute": args.execute, "lease_id": args.lease_id, "duration_s": args.duration},
+                )
+            )
+        if args.command == "found-marker":
+            return print_result(
+                *request_json(
+                    "POST",
+                    f"{base_url}/tools/go-found-marker",
                     {"execute": args.execute, "lease_id": args.lease_id, "duration_s": args.duration},
                 )
             )

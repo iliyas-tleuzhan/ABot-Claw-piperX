@@ -64,6 +64,12 @@ class PiperXAgentSdk:
     def save_previous(self) -> tuple[int, dict]:
         return self._request("POST", "/tools/piper/save-previous", {})
 
+    def go_found_marker(self, payload: dict) -> tuple[int, dict]:
+        return self._request("POST", "/tools/piper/go-found-marker", payload)
+
+    def save_found_marker(self) -> tuple[int, dict]:
+        return self._request("POST", "/tools/piper/save-found-marker", {})
+
     @staticmethod
     def validate_pose_payload(payload: dict) -> tuple[bool, str]:
         position = payload.get("position_m")

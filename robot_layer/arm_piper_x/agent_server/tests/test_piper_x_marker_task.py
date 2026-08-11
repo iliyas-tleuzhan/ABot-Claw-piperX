@@ -25,6 +25,47 @@ class PiperXMarkerParserTest(unittest.TestCase):
         self.assertIn("touch", parsed["command_text"])
         self.assertIn("--plan-only", parsed["command_text"])
 
+    def test_open_door_routes_to_touch_marker(self):
+        for phrase in (
+            "open the door",
+            "open door",
+            "activate the door button",
+            "trigger the door sensor",
+            "wave at the door sensor",
+        ):
+            with self.subTest(phrase=phrase):
+                parsed = self.parse(phrase)
+                self.assertEqual(parsed["action"], "touch")
+                self.assertIn("touch", parsed["command_text"])
+                self.assertIn("--plan-only", parsed["command_text"])
+
+    def test_search_marker_routes_to_search(self):
+        for phrase in (
+            "search for the marker",
+            "look for the marker",
+            "search",
+            "find aruco marker",
+            "locate the tag",
+        ):
+            with self.subTest(phrase=phrase):
+                parsed = self.parse(phrase)
+                self.assertEqual(parsed["action"], "search")
+                self.assertIn(" search ", parsed["command_text"])
+                self.assertIn("--plan-only", parsed["command_text"])
+                self.assertEqual(parsed["completion_type"], "marker_search_saved_found_pose")
+
+    def test_move_to_found_marker_pose_routes_to_saved_pose(self):
+        for phrase in (
+            "move to the found marker pose",
+            "go to saved marker position",
+            "return to detected aruco pose",
+        ):
+            with self.subTest(phrase=phrase):
+                parsed = self.parse(phrase)
+                self.assertEqual(parsed["action"], "found-marker")
+                self.assertIn("found-marker", parsed["command_text"])
+                self.assertIn("--plan-only", parsed["command_text"])
+
     def test_approach_marker_routes_to_approach(self):
         parsed = self.parse("approach the marker")
         self.assertEqual(parsed["action"], "approach")

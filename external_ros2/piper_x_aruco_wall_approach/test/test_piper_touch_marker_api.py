@@ -104,6 +104,20 @@ class FakeAdapter(api.RosMarkerTaskAdapter):
             "completion_type": "saved_previous_pose",
         }
 
+    def go_found_marker(self, request):
+        self.calls.append(("found-marker", request))
+        if self.delay_s:
+            time.sleep(self.delay_s)
+        if self.exc:
+            raise self.exc
+        return {
+            "success": True,
+            "stage": "complete",
+            "message": "found_marker trajectory completed",
+            "contact_confirmed": False,
+            "completion_type": "saved_found_marker_pose",
+        }
+
     def save_home(self, request):
         self.calls.append(("save-home", request))
         return {
@@ -126,6 +140,19 @@ class FakeAdapter(api.RosMarkerTaskAdapter):
             "contact_confirmed": False,
             "completion_type": "saved_previous_pose_update",
             "previous_pose_file": "/tmp/piper_x_previous_pose.yaml",
+            "joint_names": ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"],
+            "positions_rad": [0.0, 0.1, -0.2, 0.3, 0.4, 0.5],
+        }
+
+    def save_found_marker(self):
+        self.calls.append(("save-found-marker", None))
+        return {
+            "success": True,
+            "stage": "complete",
+            "message": "saved current pose as found_marker",
+            "contact_confirmed": False,
+            "completion_type": "saved_found_marker_pose_update",
+            "found_marker_pose_file": "/tmp/piper_x_found_marker_pose.yaml",
             "joint_names": ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"],
             "positions_rad": [0.0, 0.1, -0.2, 0.3, 0.4, 0.5],
         }
@@ -247,7 +274,16 @@ def test_search_marker_endpoint_proxies_search():
     response = client(adapter).post("/tools/piper/search-marker", json={"execute": False})
     assert response.status_code == 200
     assert response.json()["marker_found"] is True
-    assert [call[0] for call in adapter.calls] == ["search"]
+    assert response.json()["found_marker_pose_saved"]["completion_type"] == "saved_found_marker_pose_update"
+    assert adapter.calls[-1][0] == "save-found-marker"
+
+
+def test_go_found_marker_endpoint_uses_saved_pose():
+    adapter = FakeAdapter()
+    response = client(adapter).post("/tools/piper/go-found-marker", json={"execute": False})
+    assert response.status_code == 200
+    assert response.json()["completion_type"] == "saved_found_marker_pose"
+    assert adapter.calls[0][0] == "found-marker"
 
 
 def test_search_step_endpoint_proxies_one_step():

@@ -5,12 +5,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shlex
 from dataclasses import dataclass
+from pathlib import Path
 
 
-DEFAULT_REPO_ROOT = "/home/dase-hw101/ABot-Claw"
+DEFAULT_REPO_ROOT = os.environ.get(
+    "ABOTCLAW_REPO_ROOT",
+    str(Path(__file__).resolve().parents[4]),
+)
 
 
 @dataclass
@@ -30,12 +35,16 @@ class PiperXMarkerTask:
                 "--execute" if execute else "--plan-only",
             ]
             return args
+        if self.action == "search":
+            return base + ["search", "--execute" if execute else "--plan-only"]
         if self.action == "home":
             return base + ["home", "--execute" if execute else "--plan-only"]
         if self.action == "save-home":
             return base + ["save-home"]
         if self.action == "previous":
             return base + ["previous", "--execute" if execute else "--plan-only"]
+        if self.action == "found-marker":
+            return base + ["found-marker", "--execute" if execute else "--plan-only"]
         if self.action == "save-previous":
             return base + ["save-previous"]
         if self.action == "open-gripper":
@@ -59,8 +68,12 @@ class PiperXMarkerTask:
                 if self.action in {"open-gripper", "close-gripper"}
                 else (
                     "saved_pose_command"
-                    if self.action in {"home", "previous", "save-home", "save-previous"}
-                    else "geometric_surface_approach"
+                    if self.action in {"home", "previous", "found-marker", "save-home", "save-previous"}
+                    else (
+                        "marker_search_saved_found_pose"
+                        if self.action == "search"
+                        else "geometric_surface_approach"
+                    )
                 )
             ),
         }
@@ -80,10 +93,20 @@ def parse_task(message: str) -> PiperXMarkerTask:
         return PiperXMarkerTask("previous")
     if re.search(r"\b(go|return|move)\b.*\bback\b", text):
         return PiperXMarkerTask("previous")
+    if re.search(r"\b(go|return|move)\b.*\b(found|detected|saved)\b.*\b(marker|aruco)\b.*\b(pose|position|place|spot)\b", text):
+        return PiperXMarkerTask("found-marker")
+    if re.search(r"\b(go|return|move)\b.*\b(marker|aruco)\b.*\b(found|detected|saved)\b.*\b(pose|position|place|spot)\b", text):
+        return PiperXMarkerTask("found-marker")
     if re.search(r"\b(open|release)\b.*\b(gripper|claw|hand)\b", text):
         return PiperXMarkerTask("open-gripper")
     if re.search(r"\b(close|shut)\b.*\b(gripper|claw|hand)\b", text):
         return PiperXMarkerTask("close-gripper")
+    if re.search(r"\b(search|find|look|locate|scan)\b.*\b(marker|aruco|tag)\b", text):
+        return PiperXMarkerTask("search")
+    if re.fullmatch(r"(search|find|look|locate|scan)( for it)?", text):
+        return PiperXMarkerTask("search")
+    if re.search(r"\b(open|unlock|activate|trigger|press|wave)\b.*\b(door|doorway|entrance|button|sensor)\b", text):
+        return PiperXMarkerTask("touch")
     if re.search(r"\b(touch|press|tap|contact)\b", text):
         return PiperXMarkerTask("touch")
     if re.search(r"\b(approach|point|move)\b.*\b(marker|aruco|marked)\b", text):

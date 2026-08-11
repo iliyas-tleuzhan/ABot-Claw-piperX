@@ -76,7 +76,7 @@ Physical geometric touch, retract, and home:
 ```bash
 curl -sS -X POST http://127.0.0.1:8893/tools/touch-marker \
   -H 'Content-Type: application/json' \
-  -d '{"execute":true,"lease_id":"<LEASE_ID>","pre_clearance_m":0.05,"final_clearance_m":0.005,"retract_after":true,"retract_distance_m":0.05,"final_velocity_scaling":0.05,"return_home_after":true}' \
+  -d '{"execute":true,"lease_id":"<LEASE_ID>","pre_clearance_m":0.05,"final_clearance_m":0.005,"retract_after":true,"retract_distance_m":0.05,"final_velocity_scaling":0.12,"return_home_after":true}' \
   | python3 -m json.tool
 ```
 

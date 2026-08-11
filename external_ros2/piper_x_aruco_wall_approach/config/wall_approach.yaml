@@ -16,8 +16,8 @@ wall_approach_node:
     wall_height: 1.0
     wall_thickness: 0.02
 
-    velocity_scaling: 0.10
-    acceleration_scaling: 0.10
+    velocity_scaling: 0.18
+    acceleration_scaling: 0.15
     planning_time: 10.0
     planning_attempts: 10
     goal_position_tolerance: 0.01
@@ -27,7 +27,7 @@ wall_approach_node:
     execute: false
     final_clearance: 0.005
     retract_distance: 0.05
-    final_velocity_scaling: 0.05
+    final_velocity_scaling: 0.12
     retract_after: true
     max_final_travel: 0.06
     prefer_elbow_motion: true

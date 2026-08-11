@@ -18,8 +18,8 @@ search_marker_node:
     detection_window_frames: 5
     required_detections: 3
     max_steps: 100
-    velocity_scaling: 0.10
-    acceleration_scaling: 0.10
+    velocity_scaling: 0.18
+    acceleration_scaling: 0.15
     planning_time: 10.0
     planning_attempts: 10
 

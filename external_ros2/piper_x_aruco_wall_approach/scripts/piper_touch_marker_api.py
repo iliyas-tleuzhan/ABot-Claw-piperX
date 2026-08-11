@@ -42,7 +42,7 @@ class MarkerTaskRequest(BaseModel):
     final_clearance_m: float = Field(default=0.005)
     retract_after: bool = True
     retract_distance_m: float = Field(default=0.05)
-    final_velocity_scaling: float = Field(default=0.05)
+    final_velocity_scaling: float = Field(default=0.12)
     return_home_after: bool = False
     home_duration_s: float = Field(default=6.0)
 
@@ -167,6 +167,12 @@ class RosMarkerTaskAdapter:
     def save_previous(self) -> Dict[str, Any]:
         raise NotImplementedError
 
+    def go_found_marker(self, request: HomeRequest) -> Dict[str, Any]:
+        raise NotImplementedError
+
+    def save_found_marker(self) -> Dict[str, Any]:
+        raise NotImplementedError
+
 
 class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
     def __init__(
@@ -179,6 +185,7 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         point_cloud_timeout_s: float,
         home_pose_file: str,
         previous_pose_file: str,
+        found_marker_pose_file: str,
         joint_state_topic: str,
         joint_state_timeout_s: float,
     ):
@@ -193,10 +200,15 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         self.joint_state_timeout_s = joint_state_timeout_s
         self.home_pose_file = str(Path(home_pose_file).expanduser())
         self.previous_pose_file = str(Path(previous_pose_file).expanduser())
+        self.found_marker_pose_file = str(Path(found_marker_pose_file).expanduser())
         self.home_joint_names, self.home_positions = self._load_home_pose(self.home_pose_file)
         self.previous_joint_names, self.previous_positions = self._try_load_saved_pose(
             self.previous_pose_file,
             "previous",
+        )
+        self.found_marker_joint_names, self.found_marker_positions = self._try_load_saved_pose(
+            self.found_marker_pose_file,
+            "found_marker",
         )
         self._marker_received_monotonic_s: Optional[float] = None
         self._cloud_received_monotonic_s: Optional[float] = None
@@ -229,6 +241,10 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
     @staticmethod
     def _default_previous_pose_file(home_pose_file: str) -> str:
         return str(Path(home_pose_file).expanduser().with_name("piper_x_previous_pose.yaml"))
+
+    @staticmethod
+    def _default_found_marker_pose_file(home_pose_file: str) -> str:
+        return str(Path(home_pose_file).expanduser().with_name("piper_x_found_marker_pose.yaml"))
 
     @staticmethod
     def _load_saved_pose(path: str, pose_name: str):
@@ -525,6 +541,19 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
             request,
         )
 
+    def go_found_marker(self, request: HomeRequest) -> Dict[str, Any]:
+        if self.found_marker_joint_names is None or self.found_marker_positions is None:
+            self.found_marker_joint_names, self.found_marker_positions = self._try_load_saved_pose(
+                self.found_marker_pose_file,
+                "found_marker",
+            )
+        return self._execute_saved_joint_pose(
+            "found_marker",
+            self.found_marker_joint_names,
+            self.found_marker_positions,
+            request,
+        )
+
     def _save_current_pose(self, path: str, pose_name: str, updated_by: str) -> Dict[str, Any]:
         now_monotonic_s = time.monotonic()
         with self._lock:
@@ -618,6 +647,16 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         self.previous_positions = result["positions_rad"]
         return result
 
+    def save_found_marker(self) -> Dict[str, Any]:
+        result = self._save_current_pose(
+            self.found_marker_pose_file,
+            "found_marker",
+            "piper_touch_marker_api_search_found_marker",
+        )
+        self.found_marker_joint_names = result["joint_names"]
+        self.found_marker_positions = result["positions_rad"]
+        return result
+
 
 class FakeUnavailableAdapter(RosMarkerTaskAdapter):
     def health(self) -> HealthSnapshot:
@@ -642,6 +681,12 @@ class FakeUnavailableAdapter(RosMarkerTaskAdapter):
         raise RuntimeError("ROS adapter not initialized")
 
     def save_previous(self) -> Dict[str, Any]:
+        raise RuntimeError("ROS adapter not initialized")
+
+    def go_found_marker(self, request: HomeRequest) -> Dict[str, Any]:
+        raise RuntimeError("ROS adapter not initialized")
+
+    def save_found_marker(self) -> Dict[str, Any]:
         raise RuntimeError("ROS adapter not initialized")
 
 
@@ -798,12 +843,20 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
             if request.execute:
                 adapter.ensure_arm_enabled()
             result = adapter.search_marker(request)
+            if result.get("success", False) and result.get("marker_found", False):
+                found_marker_saved = adapter.save_found_marker()
+                result["found_marker_pose_saved"] = found_marker_saved
+                result["message"] = "found marker 6 and saved current pose as found_marker"
         except HTTPException:
             raise
         except TimeoutError as exc:
             raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail=str(exc)) from exc
         except Exception as exc:
-            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+            stage = "save_found_marker" if "result" in locals() and result.get("marker_found", False) else "search_marker"
+            detail = {"success": False, "stage": stage, "message": str(exc)}
+            if "result" in locals():
+                detail["search_result"] = result
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=detail) from exc
         finally:
             command_lock.release()
         if not result.get("success", False):
@@ -907,6 +960,36 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=result)
         return result
 
+    def run_found_marker_endpoint(request: HomeRequest) -> Dict[str, Any]:
+        validate_home_request(request)
+        health_snapshot = adapter.health()
+        if request.execute and not health_snapshot.execution_allowed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="physical execution is disabled; set PIPER_TOUCH_ALLOW_EXECUTION=1",
+            )
+        if not health_snapshot.home_action_available:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="trajectory action unavailable",
+            )
+        if not command_lock.acquire(blocking=False):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="another PiPER marker task is active")
+        try:
+            arm_enable_result = adapter.ensure_arm_enabled() if request.execute else None
+            result = adapter.go_found_marker(request)
+            if arm_enable_result is not None:
+                result["arm_enable"] = arm_enable_result
+        except TimeoutError as exc:
+            raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+        finally:
+            command_lock.release()
+        if not result.get("success", False):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=result)
+        return result
+
     @app.post("/tools/piper/approach-marker")
     def approach_marker(
         request: MarkerTaskRequest,
@@ -962,6 +1045,13 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
     ) -> Dict[str, Any]:
         return run_previous_endpoint(request)
 
+    @app.post("/tools/piper/go-found-marker")
+    def go_found_marker(
+        request: HomeRequest,
+        _: None = Depends(require_auth),
+    ) -> Dict[str, Any]:
+        return run_found_marker_endpoint(request)
+
     @app.post("/tools/piper/save-home")
     def save_home(
         request: SaveHomeRequest,
@@ -972,6 +1062,23 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
     @app.post("/tools/piper/save-previous")
     def save_previous(_: None = Depends(require_auth)) -> Dict[str, Any]:
         return run_save_previous_endpoint()
+
+    @app.post("/tools/piper/save-found-marker")
+    def save_found_marker(_: None = Depends(require_auth)) -> Dict[str, Any]:
+        health_snapshot = adapter.health()
+        if not health_snapshot.joint_state_available:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="fresh joint state unavailable")
+        if not command_lock.acquire(blocking=False):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="another PiPER marker task is active")
+        try:
+            result = adapter.save_found_marker()
+        except Exception as exc:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+        finally:
+            command_lock.release()
+        if not result.get("success", False):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=result)
+        return result
 
     return app
 
@@ -988,6 +1095,7 @@ def main() -> None:
     parser.add_argument("--point-cloud-timeout-s", type=float, default=2.0)
     parser.add_argument("--home-pose-file", default=MarkerTaskBridge._default_home_pose_file())
     parser.add_argument("--previous-pose-file", default=None)
+    parser.add_argument("--found-marker-pose-file", default=None)
     parser.add_argument("--joint-state-topic", default="/feedback/joint_states")
     parser.add_argument("--joint-state-timeout-s", type=float, default=1.0)
     args, _ros_args = parser.parse_known_args()
@@ -1003,6 +1111,8 @@ def main() -> None:
         home_pose_file=args.home_pose_file,
         previous_pose_file=args.previous_pose_file
         or MarkerTaskBridge._default_previous_pose_file(args.home_pose_file),
+        found_marker_pose_file=args.found_marker_pose_file
+        or MarkerTaskBridge._default_found_marker_pose_file(args.home_pose_file),
         joint_state_topic=args.joint_state_topic,
         joint_state_timeout_s=args.joint_state_timeout_s,
     )

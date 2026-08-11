@@ -1,6 +1,6 @@
 ---
 name: piper-touch-marker
-description: Use the PiPER-X ROS 2 Agent Server for requests such as "touch the marker", "touch ArUco marker 6", "move the Piper arm to the marker", "approach the marker", "point at the marker", "press the marked location", "go home", "return the Piper arm home", "go back to the previous pose", "save current pose as previous", "open the gripper", or "close the gripper".
+description: Use the PiPER-X ROS 2 Agent Server for requests such as "search for the marker", "look for the marker", "find the marker", "touch the marker", "touch ArUco marker 6", "move the Piper arm to the marker", "approach the marker", "point at the marker", "press the marked location", "open the door", "open door", "activate the door button", "press the door button", "go home", "return the Piper arm home", "go back to the previous pose", "move to the found marker pose", "save current pose as previous", "open the gripper", or "close the gripper".
 ---
 
 # PiPER Touch Marker

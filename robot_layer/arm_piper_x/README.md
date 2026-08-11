@@ -18,6 +18,7 @@ wrapped by a PiPER-X Agent Server:
 - approach marker: `POST /tools/approach-marker`
 - geometric touch marker: `POST /tools/touch-marker`
 - reactive marker search: `POST /tools/search-step`, `POST /tools/search-marker`
+- move to saved found-marker pose: `POST /tools/go-found-marker`
 - go to saved home pose: `POST /tools/go-home`
 - save current pose as home: `POST /tools/save-home`
 - go to saved previous pose: `POST /tools/go-previous`
@@ -64,6 +65,8 @@ The old calibrated 3x3 search-pose grid is replaced by bounded reactive search.
 OpenClaw may decide one direction at a time, but must call the Agent Server
 `/tools/search-step` endpoint. The robot layer executes only small configured
 MoveIt joint-delta primitives and stops as soon as marker 6 is visible.
+Successful `search-marker` saves the current six-joint pose as `found_marker`
+and leaves the arm at that pose.
 
 The only search-ending limit is `max_steps: 100`; there is no wall-clock search
 time limit.

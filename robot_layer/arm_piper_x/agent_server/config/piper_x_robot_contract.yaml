@@ -55,8 +55,8 @@ joint_position_limits_rad_from_urdf:
   joint5: {lower: -1.553343, upper: 1.553343}
   joint6: {lower: -2.0943951, upper: 2.0943951}
 moveit_velocity_acceleration_limits_from_config:
-  default_velocity_scaling_factor: 0.10
-  default_acceleration_scaling_factor: 0.10
+  default_velocity_scaling_factor: 0.18
+  default_acceleration_scaling_factor: 0.15
   joints:
     joint1: {max_velocity: 5.0, max_acceleration: 5.0}
     joint2: {max_velocity: 5.0, max_acceleration: 5.0}
@@ -87,6 +87,8 @@ local_http_api:
   touch_marker: /tools/touch-marker
   search_marker: /tools/search-marker
   search_step: /tools/search-step
+  go_found_marker: /tools/go-found-marker
+  save_found_marker: /tools/save-found-marker
   go_home: /tools/go-home
   save_home: /tools/save-home
   go_previous: /tools/go-previous
