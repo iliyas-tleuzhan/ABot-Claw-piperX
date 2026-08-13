@@ -5,7 +5,7 @@ This file is for the Orin setup:
 - Orin SSH: `dase-orin@192.168.1.148`
 - Docker container: `iliyas-abot`
 - front PiPER-X arm CAN: `can2`
-- back PiPER-X arm CAN: `can3`
+- rear PiPER-X arm CAN: `can3`
 - Bunker CAN: `can4`
 - Camera: RealSense D435i
 - Low-level PiPER-X API: `http://127.0.0.1:8892`
@@ -85,6 +85,20 @@ Inside `iliyas-abot`:
 cd /workspace/ABot-Claw-piperX
 export PIPER_X_AGENT_ALLOW_EXECUTION=1
 ./robot_layer/arm_piper_x/agent_server/start_piper_x_agent_server.sh
+```
+
+This startup also starts passive communication listeners for the Bunker-to-manipulation trigger:
+
+```text
+/manipulation_task/start       std_msgs/msg/String
+/manipulation_task/start_bool  std_msgs/msg/Bool
+```
+
+The logs are:
+
+```text
+/tmp/abotclaw_logs/manipulation_task_start.log
+/tmp/abotclaw_logs/manipulation_task_start_bool.log
 ```
 
 Background version:
@@ -434,6 +448,8 @@ pkill -f "openclaw gateway" || true
 pkill -f openclaw-gateway || true
 pkill -f "robot_layer/arm_piper_x/agent_server/server.py" || true
 pkill -f "start_piper_x_agent_server.sh" || true
+pkill -f "ros2 topic echo /manipulation_task/start" || true
+pkill -f "ros2 topic echo /manipulation_task/start_bool" || true
 pkill -f "touch_marker_full_stack.launch.py" || true
 pkill -f "piper_touch_marker_api.py" || true
 pkill -f "piper_x_control_gate.py" || true
@@ -456,6 +472,8 @@ pkill -f "openclaw gateway" || true
 pkill -f openclaw-gateway || true
 pkill -f "robot_layer/arm_piper_x/agent_server/server.py" || true
 pkill -f "start_piper_x_agent_server.sh" || true
+pkill -f "ros2 topic echo /manipulation_task/start" || true
+pkill -f "ros2 topic echo /manipulation_task/start_bool" || true
 pkill -f "touch_marker_full_stack.launch.py" || true
 pkill -f "piper_touch_marker_api.py" || true
 pkill -f "piper_x_control_gate.py" || true
@@ -476,6 +494,8 @@ Hard stop version if regular `pkill` does not clear everything:
 pkill -9 -f "openclaw gateway" || true
 pkill -9 -f openclaw-gateway || true
 pkill -9 -f "robot_layer/arm_piper_x/agent_server/server.py" || true
+pkill -9 -f "ros2 topic echo /manipulation_task/start" || true
+pkill -9 -f "ros2 topic echo /manipulation_task/start_bool" || true
 pkill -9 -f "touch_marker_full_stack.launch.py" || true
 pkill -9 -f "piper_touch_marker_api.py" || true
 pkill -9 -f "piper_x_control_gate.py" || true

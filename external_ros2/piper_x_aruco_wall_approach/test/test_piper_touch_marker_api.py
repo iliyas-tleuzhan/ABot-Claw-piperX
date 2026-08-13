@@ -539,3 +539,11 @@ def test_contact_is_never_force_confirmed():
     body = response.json()
     assert body["contact_confirmed"] is False
     assert body["completion_type"] == "single_moveit_marker_touch"
+
+
+def test_namespace_from_action_supports_front_piper_moveit():
+    assert (
+        api.namespace_from_action("/front_piper/arm_controller/follow_joint_trajectory")
+        == "/front_piper"
+    )
+    assert api.namespace_from_action("/arm_controller/follow_joint_trajectory") == ""

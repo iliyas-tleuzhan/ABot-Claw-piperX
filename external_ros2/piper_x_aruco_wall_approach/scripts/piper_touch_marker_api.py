@@ -27,6 +27,13 @@ import uvicorn
 from piper_x_aruco_wall_approach.srv import RunMarkerTask, SearchMarker
 
 
+def namespace_from_action(action_name: str) -> str:
+    parts = action_name.strip("/").split("/")
+    if len(parts) <= 2:
+        return ""
+    return "/" + "/".join(parts[:-2])
+
+
 def execution_allowed_from_env() -> bool:
     return os.environ.get("PIPER_TOUCH_ALLOW_EXECUTION", "").strip().lower() in {"1", "true"}
 
@@ -349,9 +356,10 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
             and joint_state_age_s <= self.joint_state_timeout_s
         )
         names_and_types = dict(self.get_service_names_and_types())
+        moveit_namespace = namespace_from_action(self.trajectory_action)
         moveit_available = (
-            "/move_action/_action/send_goal" in names_and_types
-            or "/plan_kinematic_path" in names_and_types
+            f"{moveit_namespace}/move_action/_action/send_goal" in names_and_types
+            or f"{moveit_namespace}/plan_kinematic_path" in names_and_types
         )
         home_action_available = f"{self.trajectory_action}/_action/send_goal" in names_and_types
         return HealthSnapshot(
