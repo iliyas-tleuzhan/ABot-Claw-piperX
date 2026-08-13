@@ -51,13 +51,48 @@ talk directly to CAN or expose arbitrary joint commands.
 - gripper opening width range: `[0.0, 0.1] m`
 - gripper effort range: `[0.5, 3.0] N`
 - wrist camera: Intel RealSense D435i depth camera
-- color image: `/camera/camera/color/image_raw`
-- camera info: `/camera/camera/color/camera_info`
-- point cloud: `/camera/camera/depth/color/points`
+- integrated front color image: `/front_camera/color/image_raw`
+- integrated front camera info: `/front_camera/color/camera_info`
+- integrated front point cloud: `/front_camera/depth/color/points`
 - ArUco pose: `/aruco_single/pose`
 - marker: ID `6`, size `0.03 m`
 - hand-eye calibration file:
   `/home/dase-hw101/handeye/config/piper_x_d435i_eye_in_hand.json`
+
+## Bunker Integration Defaults
+
+For the combined PiPER-on-Bunker system, Trystan's Nav2 full-system stack owns
+the RealSense camera, Bunker base, front/rear PiPER hardware drivers, combined
+`/joint_states`, and robot TF. The PiPER-X marker stack defaults to consuming
+those integrated front-camera/front-arm topics instead of starting another
+RealSense publisher:
+
+- `use_realsense:=false`
+- RGB image: `/front_camera/color/image_raw`
+- camera info: `/front_camera/color/camera_info`
+- point cloud: `/front_camera/depth/color/points`
+- camera optical frame: `front_camera_color_optical_frame`
+- integrated robot joint state input: `/joint_states`
+- adapted raw front-arm feedback output: `/front_piper/feedback/joint_states`
+
+The current marker and search code still uses the AgileX single-arm MoveIt
+model with raw joint names `joint1` through `joint6`. Trystan's integrated
+stack publishes merged names such as `front_piper_joint1` on `/joint_states`.
+The `front_piper_joint_state_adapter` node converts those six front-arm names
+into raw `joint1..joint6` on `/front_piper/feedback/joint_states`, which keeps
+the existing single-arm MoveIt/search/touch code compatible with the integrated
+robot-state contract.
+
+This adapter handles feedback only. The trajectory action and control topic
+are provided by this package when `use_piper_motion_stack:=true`; otherwise
+they must already be provided by another compatible front-PiPER controller:
+
+- `/front_piper/arm_controller/follow_joint_trajectory`
+- `/front_piper/control/joint_states`
+
+The marker/search nodes talk to the namespaced MoveIt instance through
+`move_group_namespace:=front_piper`, while their ROS services and HTTP API stay
+at the root namespace for OpenClaw.
 
 ## Reactive Marker Search
 

@@ -42,7 +42,7 @@ class MarkerTaskRequest(BaseModel):
     final_clearance_m: float = Field(default=0.005)
     retract_after: bool = True
     retract_distance_m: float = Field(default=0.05)
-    final_velocity_scaling: float = Field(default=0.12)
+    final_velocity_scaling: float = Field(default=0.16)
     return_home_after: bool = False
     home_duration_s: float = Field(default=6.0)
 
@@ -188,6 +188,7 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         found_marker_pose_file: str,
         joint_state_topic: str,
         joint_state_timeout_s: float,
+        trajectory_action: str,
     ):
         super().__init__("piper_touch_marker_api_bridge")
         self.marker_pose_topic = marker_pose_topic
@@ -198,6 +199,7 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         self.point_cloud_timeout_s = point_cloud_timeout_s
         self.joint_state_topic = joint_state_topic
         self.joint_state_timeout_s = joint_state_timeout_s
+        self.trajectory_action = trajectory_action
         self.home_pose_file = str(Path(home_pose_file).expanduser())
         self.previous_pose_file = str(Path(previous_pose_file).expanduser())
         self.found_marker_pose_file = str(Path(found_marker_pose_file).expanduser())
@@ -224,7 +226,7 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         self._home_client = ActionClient(
             self,
             FollowJointTrajectory,
-            "/arm_controller/follow_joint_trajectory",
+            self.trajectory_action,
         )
         self.create_subscription(PoseStamped, marker_pose_topic, self._marker_callback, 10)
         self.create_subscription(PointCloud2, point_cloud_topic, self._cloud_callback, 10)
@@ -351,7 +353,7 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
             "/move_action/_action/send_goal" in names_and_types
             or "/plan_kinematic_path" in names_and_types
         )
-        home_action_available = "/arm_controller/follow_joint_trajectory/_action/send_goal" in names_and_types
+        home_action_available = f"{self.trajectory_action}/_action/send_goal" in names_and_types
         return HealthSnapshot(
             ros_ok=rclpy.ok(),
             marker_pose_available=marker_fresh,
@@ -464,7 +466,7 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         request: HomeRequest,
     ) -> Dict[str, Any]:
         if not self._home_client.wait_for_server(timeout_sec=1.0):
-            raise RuntimeError("action /arm_controller/follow_joint_trajectory is not available")
+            raise RuntimeError(f"action {self.trajectory_action} is not available")
         if joint_names is None or positions is None:
             raise RuntimeError(f"saved pose '{pose_name}' is not available")
         if not request.execute:
@@ -825,7 +827,10 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
         finally:
             command_lock.release()
-        if not result.get("success", False):
+        if (
+            not result.get("success", False)
+            and result.get("stage") not in {"search_complete", "marker_not_found"}
+        ):
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=result)
         return result
 
@@ -859,7 +864,10 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=detail) from exc
         finally:
             command_lock.release()
-        if not result.get("success", False):
+        if (
+            not result.get("success", False)
+            and result.get("stage") not in {"search_complete", "marker_not_found"}
+        ):
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=result)
         return result
 
@@ -1098,6 +1106,10 @@ def main() -> None:
     parser.add_argument("--found-marker-pose-file", default=None)
     parser.add_argument("--joint-state-topic", default="/feedback/joint_states")
     parser.add_argument("--joint-state-timeout-s", type=float, default=1.0)
+    parser.add_argument(
+        "--trajectory-action",
+        default="/arm_controller/follow_joint_trajectory",
+    )
     args, _ros_args = parser.parse_known_args()
 
     rclpy.init()
@@ -1115,6 +1127,7 @@ def main() -> None:
         or MarkerTaskBridge._default_found_marker_pose_file(args.home_pose_file),
         joint_state_topic=args.joint_state_topic,
         joint_state_timeout_s=args.joint_state_timeout_s,
+        trajectory_action=args.trajectory_action,
     )
     executor = rclpy.executors.MultiThreadedExecutor()
     executor.add_node(adapter)

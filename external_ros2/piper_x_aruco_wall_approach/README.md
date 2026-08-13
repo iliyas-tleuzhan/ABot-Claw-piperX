@@ -137,8 +137,22 @@ source ~/ros2_ws/install/setup.bash
 ros2 launch piper_x_aruco_wall_approach touch_marker_full_stack.launch.py \
   execute_allowed:=false \
   calibration_file:=/home/dase-hw101/handeye/config/piper_x_d435i_eye_in_hand.json \
+  piper_namespace:=front_piper \
+  use_piper_motion_stack:=true \
+  use_handeye_tf_publisher:=false \
   can_port:=can2 \
-  point_cloud_topic:=/camera/camera/depth/color/points \
+  use_realsense:=false \
+  camera_image_topic:=/front_camera/color/image_raw \
+  camera_info_topic:=/front_camera/color/camera_info \
+  point_cloud_topic:=/front_camera/depth/color/points \
+  camera_root_frame:=front_camera_link \
+  camera_optical_frame:=front_camera_color_optical_frame \
+  use_front_piper_joint_state_adapter:=true \
+  integrated_joint_state_topic:=/joint_states \
+  front_piper_joint_prefix:=front_piper_ \
+  joint_state_topic:=/front_piper/feedback/joint_states \
+  control_topic:=/front_piper/control/joint_states \
+  trajectory_action:=/front_piper/arm_controller/follow_joint_trajectory \
   marker_id:=6 \
   marker_size:=0.03 \
   prefer_elbow_motion:=true \
@@ -147,10 +161,12 @@ ros2 launch piper_x_aruco_wall_approach touch_marker_full_stack.launch.py \
   point_cloud_timeout:=2.0
 ```
 
-The launch starts:
+In integrated Bunker mode, the launch subscribes to Trystan's front RealSense
+topics and does not start another RealSense node. The launch starts:
 
-- PiPER-X + MoveIt with `arm_type:=piper_x`, `effector_type:=agx_gripper`, `fw_version:=v189`, `tcp_offset:=[0.0, 0.0, 0.1425, 0.0, 0.0, 0.0]`
-- RealSense color, aligned depth, and point cloud
+- front PiPER-X + MoveIt under `piper_namespace:=front_piper` with
+  `arm_type:=piper_x`, `effector_type:=agx_gripper`, `fw_version:=v189`,
+  `tcp_offset:=[0.0, 0.0, 0.1425, 0.0, 0.0, 0.0]`
 - packaged hand-eye TF publisher
 - `aruco_ros` marker detector
 - `search_marker_node`
@@ -159,6 +175,24 @@ The launch starts:
 
 It must not be run together with another PiPER-X driver on the selected CAN
 interface. The PiPER-X arm uses `can2`. The Bunker base uses `can3`.
+
+The current MoveIt configuration uses raw single-arm joint names
+`joint1..joint6`. The integrated stack publishes merged joint names like
+`front_piper_joint1` on `/joint_states`, so this package starts
+`front_piper_joint_state_adapter.py` by default. That node republishes the front
+six joints as raw `joint1..joint6` on `/front_piper/feedback/joint_states`.
+
+Motion interfaces are namespaced under `/front_piper`:
+
+- action: `/front_piper/arm_controller/follow_joint_trajectory`
+- control topic: `/front_piper/control/joint_states`
+- MoveIt namespace: `/front_piper`
+- control gate service: `/front_piper/control_enable`
+
+If another stack already starts a compatible front-PiPER MoveIt/controller
+bundle, set `use_piper_motion_stack:=false` and keep the same interface names.
+If Trystan's combined URDF publishes the camera TF, keep
+`use_handeye_tf_publisher:=false` to avoid duplicate static transforms.
 
 ## Marker Search
 
@@ -284,7 +318,7 @@ Structured service:
 
 ```bash
 ros2 service call /run_marker_task piper_x_aruco_wall_approach/srv/RunMarkerTask \
-  "{mode: approach, execute: false, pre_clearance_m: 0.05, final_clearance_m: 0.005, retract_distance_m: 0.05, final_velocity_scaling: 0.12, retract_after: false}"
+  "{mode: approach, execute: false, pre_clearance_m: 0.05, final_clearance_m: 0.005, retract_distance_m: 0.05, final_velocity_scaling: 0.16, retract_after: false}"
 ```
 
 Published targets:

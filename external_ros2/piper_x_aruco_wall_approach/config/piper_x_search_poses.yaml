@@ -18,14 +18,16 @@ search_marker_node:
     detection_window_frames: 5
     required_detections: 3
     max_steps: 100
-    velocity_scaling: 0.18
-    acceleration_scaling: 0.15
+    velocity_scaling: 0.24
+    acceleration_scaling: 0.20
     planning_time: 10.0
     planning_attempts: 10
 
     # Hard safety cap for a single reactive step. Direction deltas larger than
     # this are clamped before planning.
     max_single_joint_step_deg: 15.0
+    min_feedback_motion_deg: 1.0
+    physical_motion_timeout_s: 2.0
 
     # Each step should noticeably change the camera view. OpenClaw may decide
     # the next direction, but the robot layer only accepts these bounded
@@ -34,12 +36,12 @@ search_marker_node:
     direction_deltas_deg:
       left:       [12.0, 0.0, 0.0, 0.0, 0.0, 0.0]
       right:      [-12.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-      up:         [0.0, 0.0, 0.0, 12.0, 0.0, 0.0]
-      down:       [0.0, 0.0, 0.0, -12.0, 0.0, 0.0]
-      up_left:    [10.0, 0.0, 0.0, 10.0, 0.0, 0.0]
-      up_right:   [-10.0, 0.0, 0.0, 10.0, 0.0, 0.0]
-      down_left:  [10.0, 0.0, 0.0, -10.0, 0.0, 0.0]
-      down_right: [-10.0, 0.0, 0.0, -10.0, 0.0, 0.0]
+      up:         [0.0, 0.0, 0.0, -12.0, 0.0, 0.0]
+      down:       [0.0, 0.0, 0.0, 12.0, 0.0, 0.0]
+      up_left:    [10.0, 0.0, 0.0, -10.0, 0.0, 0.0]
+      up_right:   [-10.0, 0.0, 0.0, -10.0, 0.0, 0.0]
+      down_left:  [10.0, 0.0, 0.0, 10.0, 0.0, 0.0]
+      down_right: [-10.0, 0.0, 0.0, 10.0, 0.0, 0.0]
 
     # Used only when a legacy caller invokes search-marker with direction=auto.
     # OpenClaw-directed search should prefer /tools/search-step. The default

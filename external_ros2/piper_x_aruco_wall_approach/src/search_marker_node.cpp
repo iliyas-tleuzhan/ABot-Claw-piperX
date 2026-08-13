@@ -4,6 +4,7 @@
 #include <cmath>
 #include <memory>
 #include <mutex>
+#include <limits>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -11,6 +12,7 @@
 
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <moveit/move_group_interface/move_group_interface.h>
+#include <rclcpp/executors/multi_threaded_executor.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
 
@@ -93,6 +95,7 @@ public:
     aruco_pose_topic_ = declare_parameter<std::string>("aruco_pose_topic", "/aruco_single/pose");
     joint_state_topic_ = declare_parameter<std::string>("joint_state_topic", "joint_states");
     planning_group_ = declare_parameter<std::string>("planning_group", "arm");
+    move_group_namespace_ = declare_parameter<std::string>("move_group_namespace", "");
     marker_id_ = declare_parameter<int>("marker_id", 6);
     marker_timeout_s_ = declare_parameter<double>("marker_timeout_s", 1.0);
     joint_state_timeout_s_ = declare_parameter<double>("joint_state_timeout_s", 1.0);
@@ -105,6 +108,8 @@ public:
     planning_time_ = declare_parameter<double>("planning_time", 10.0);
     planning_attempts_ = declare_parameter<int>("planning_attempts", 10);
     max_single_joint_step_deg_ = declare_parameter<double>("max_single_joint_step_deg", 8.0);
+    min_feedback_motion_deg_ = declare_parameter<double>("min_feedback_motion_deg", 1.0);
+    physical_motion_timeout_s_ = declare_parameter<double>("physical_motion_timeout_s", 2.0);
     center_step_scale_ = declare_parameter<double>("center_step_scale", 1.0);
     auto_sequence_ = declare_parameter<std::vector<std::string>>(
       "auto_sequence",
@@ -115,6 +120,11 @@ public:
     load_direction_deltas();
     normalise_parameters();
 
+    data_callback_group_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+    service_callback_group_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+    rclcpp::SubscriptionOptions data_subscription_options;
+    data_subscription_options.callback_group = data_callback_group_;
+
     marker_subscription_ = create_subscription<geometry_msgs::msg::PoseStamped>(
       aruco_pose_topic_, 10,
       [this](const geometry_msgs::msg::PoseStamped::SharedPtr msg) {
@@ -122,7 +132,8 @@ public:
         last_marker_received_ = now();
         last_marker_header_stamp_s_ = stamp_to_seconds(*msg);
         marker_sequence_++;
-      });
+      },
+      data_subscription_options);
 
     joint_state_subscription_ = create_subscription<sensor_msgs::msg::JointState>(
       joint_state_topic_, rclcpp::SensorDataQoS(),
@@ -130,7 +141,8 @@ public:
         std::lock_guard<std::mutex> lock(data_mutex_);
         last_joint_received_ = now();
         last_joint_state_ = *msg;
-      });
+      },
+      data_subscription_options);
 
     service_ = create_service<piper_x_aruco_wall_approach::srv::SearchMarker>(
       "/search_marker",
@@ -138,7 +150,9 @@ public:
         const std::shared_ptr<piper_x_aruco_wall_approach::srv::SearchMarker::Request> request,
         std::shared_ptr<piper_x_aruco_wall_approach::srv::SearchMarker::Response> response) {
         handle_search(request, response);
-      });
+      },
+      rmw_qos_profile_services_default,
+      service_callback_group_);
 
     RCLCPP_INFO(
       get_logger(),
@@ -148,14 +162,18 @@ public:
 
   void initialise_moveit(const rclcpp::Node::SharedPtr & node)
   {
+    moveit::planning_interface::MoveGroupInterface::Options options(
+      planning_group_, "robot_description", move_group_namespace_);
     move_group_ = std::make_unique<moveit::planning_interface::MoveGroupInterface>(
       node,
-      planning_group_);
+      options);
     move_group_->setMaxVelocityScalingFactor(velocity_scaling_);
     move_group_->setMaxAccelerationScalingFactor(acceleration_scaling_);
     move_group_->setPlanningTime(planning_time_);
     move_group_->setNumPlanningAttempts(planning_attempts_);
-    RCLCPP_INFO(get_logger(), "MoveIt ready for reactive marker search: group=%s", planning_group_.c_str());
+    RCLCPP_INFO(
+      get_logger(), "MoveIt ready for reactive marker search: group=%s, namespace=%s",
+      planning_group_.c_str(), move_group_namespace_.c_str());
   }
 
 private:
@@ -206,6 +224,13 @@ private:
       max_single_joint_step_deg_ = 8.0;
     }
     max_single_joint_step_rad_ = max_single_joint_step_deg_ * M_PI / 180.0;
+    if (!std::isfinite(min_feedback_motion_deg_) || min_feedback_motion_deg_ <= 0.0) {
+      min_feedback_motion_deg_ = 1.0;
+    }
+    min_feedback_motion_rad_ = min_feedback_motion_deg_ * M_PI / 180.0;
+    if (!std::isfinite(physical_motion_timeout_s_) || physical_motion_timeout_s_ <= 0.0) {
+      physical_motion_timeout_s_ = 2.0;
+    }
     if (!std::isfinite(center_step_scale_) || center_step_scale_ <= 0.0) {
       center_step_scale_ = 1.0;
     }
@@ -329,6 +354,91 @@ private:
     return values;
   }
 
+  static double max_abs_difference(
+    const std::vector<double> & lhs,
+    const std::vector<double> & rhs)
+  {
+    if (lhs.size() != rhs.size()) {
+      return std::numeric_limits<double>::infinity();
+    }
+    double max_difference = 0.0;
+    for (std::size_t i = 0; i < lhs.size(); ++i) {
+      max_difference = std::max(max_difference, std::abs(lhs[i] - rhs[i]));
+    }
+    return max_difference;
+  }
+
+  template<typename PlanT>
+  static auto joint_trajectory_from_plan(const PlanT & plan, int)
+    -> decltype((plan.trajectory.joint_trajectory))
+  {
+    return plan.trajectory.joint_trajectory;
+  }
+
+  template<typename PlanT>
+  static auto joint_trajectory_from_plan(const PlanT & plan, long)
+    -> decltype((plan.trajectory_.joint_trajectory))
+  {
+    return plan.trajectory_.joint_trajectory;
+  }
+
+  std::optional<std::vector<double>> planned_final_joint_values(
+    const moveit::planning_interface::MoveGroupInterface::Plan & plan,
+    const std::vector<std::string> & expected_joint_names) const
+  {
+    const auto & trajectory = joint_trajectory_from_plan(plan, 0);
+    if (trajectory.points.empty()) {
+      return std::nullopt;
+    }
+
+    const auto & final_point = trajectory.points.back();
+    if (final_point.positions.size() != trajectory.joint_names.size()) {
+      return std::nullopt;
+    }
+
+    std::vector<double> values;
+    values.reserve(expected_joint_names.size());
+    for (const auto & joint_name : expected_joint_names) {
+      const auto iter = std::find(
+        trajectory.joint_names.begin(),
+        trajectory.joint_names.end(),
+        joint_name);
+      if (iter == trajectory.joint_names.end()) {
+        return std::nullopt;
+      }
+      const auto index = static_cast<std::size_t>(
+        std::distance(trajectory.joint_names.begin(), iter));
+      values.push_back(final_point.positions[index]);
+    }
+    return values;
+  }
+
+  bool wait_for_physical_feedback_motion(
+    const std::vector<double> & before,
+    std::string & message)
+  {
+    const auto deadline = std::chrono::steady_clock::now() +
+      std::chrono::duration<double>(physical_motion_timeout_s_);
+    while (std::chrono::steady_clock::now() < deadline && rclcpp::ok()) {
+      rclcpp::sleep_for(100ms);
+      std::string joint_message;
+      const auto after = current_joint_values(joint_message);
+      if (!after) {
+        message = joint_message;
+        continue;
+      }
+      if (max_abs_difference(before, *after) >= min_feedback_motion_rad_) {
+        return true;
+      }
+    }
+
+    message =
+      "MoveIt reported execution success, but real joint feedback did not change by at least " +
+      std::to_string(min_feedback_motion_deg_) +
+      " deg. The AGX arm may be disabled, the control gate may be closed, or MoveIt may only be driving the ros2_control FakeSystem.";
+    return false;
+  }
+
   bool execute_joint_delta(
     const std::vector<double> & delta,
     const bool execute,
@@ -353,6 +463,7 @@ private:
       message = joint_message;
       return false;
     }
+    const auto joint_names = move_group_->getJointNames();
     std::vector<double> target = *current;
     for (std::size_t i = 0; i < kJointCount; ++i) {
       target[i] += delta[i];
@@ -367,6 +478,16 @@ private:
       message = "MoveIt planning failed for reactive search direction '" + direction + "'";
       return false;
     }
+    const auto planned_final = planned_final_joint_values(plan, joint_names);
+    if (planned_final && max_abs_difference(*current, *planned_final) < min_feedback_motion_rad_) {
+      stage = "search_motion_skipped";
+      message =
+        "reactive search direction '" + direction +
+        "' was skipped because the planned physical motion is below " +
+        std::to_string(min_feedback_motion_deg_) +
+        " deg, likely because the joint is at or near its limit";
+      return true;
+    }
     if (!execute) {
       stage = "plan_only";
       message = "reactive search direction '" + direction + "' planned; execute=false so no motion was commanded";
@@ -376,6 +497,10 @@ private:
     if (execute_result != moveit::core::MoveItErrorCode::SUCCESS) {
       stage = "search_execution";
       message = "MoveIt execution failed for reactive search direction '" + direction + "'";
+      return false;
+    }
+    if (!wait_for_physical_feedback_motion(*current, message)) {
+      stage = "physical_motion";
       return false;
     }
     for (std::size_t i = 0; i < kJointCount; ++i) {
@@ -491,7 +616,12 @@ private:
         response->found_at_pose = found_at_pose;
         return;
       }
-      if (response->stage == "search_motion_complete" || response->stage == "current_view" || response->stage == "plan_only") {
+      if (
+        response->stage == "search_motion_complete" ||
+        response->stage == "search_motion_skipped" ||
+        response->stage == "current_view" ||
+        response->stage == "plan_only")
+      {
         response->success = true;
         response->stage = "step_complete";
         response->message = "reactive search step completed; marker_not_found";
@@ -510,7 +640,10 @@ private:
         response->found_at_pose = found_at_pose;
         return;
       }
-      if (response->stage != "search_motion_complete") {
+      if (
+        response->stage != "search_motion_complete" &&
+        response->stage != "search_motion_skipped")
+      {
         return;
       }
     }
@@ -523,6 +656,7 @@ private:
   std::string aruco_pose_topic_;
   std::string joint_state_topic_;
   std::string planning_group_;
+  std::string move_group_namespace_;
   int marker_id_{};
   double marker_timeout_s_{};
   double joint_state_timeout_s_{};
@@ -536,12 +670,17 @@ private:
   int planning_attempts_{};
   double max_single_joint_step_deg_{};
   double max_single_joint_step_rad_{};
+  double min_feedback_motion_deg_{};
+  double min_feedback_motion_rad_{};
+  double physical_motion_timeout_s_{};
   double center_step_scale_{};
   std::vector<std::string> auto_sequence_;
   std::unordered_map<std::string, std::vector<double>> direction_deltas_;
   std::vector<double> cumulative_offset_ = std::vector<double>(kJointCount, 0.0);
 
   std::unique_ptr<moveit::planning_interface::MoveGroupInterface> move_group_;
+  rclcpp::CallbackGroup::SharedPtr data_callback_group_;
+  rclcpp::CallbackGroup::SharedPtr service_callback_group_;
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr marker_subscription_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_subscription_;
   rclcpp::Service<piper_x_aruco_wall_approach::srv::SearchMarker>::SharedPtr service_;
@@ -560,7 +699,9 @@ int main(int argc, char ** argv)
   rclcpp::init(argc, argv);
   auto node = std::make_shared<SearchMarkerNode>();
   node->initialise_moveit(node);
-  rclcpp::spin(node);
+  rclcpp::executors::MultiThreadedExecutor executor;
+  executor.add_node(node);
+  executor.spin();
   rclcpp::shutdown();
   return 0;
 }

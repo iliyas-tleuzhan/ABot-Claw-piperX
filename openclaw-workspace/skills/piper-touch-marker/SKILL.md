@@ -47,7 +47,7 @@ Approach marker:
 ```bash
 curl -sS -X POST http://127.0.0.1:8893/tools/approach-marker \
   -H 'Content-Type: application/json' \
-  -d '{"execute":true,"lease_id":"<LEASE_ID>","pre_clearance_m":0.05,"final_clearance_m":0.005,"retract_after":false,"retract_distance_m":0.05,"final_velocity_scaling":0.12,"return_home_after":false,"home_duration_s":6.0}'
+  -d '{"execute":true,"lease_id":"<LEASE_ID>","pre_clearance_m":0.05,"final_clearance_m":0.005,"retract_after":false,"retract_distance_m":0.05,"final_velocity_scaling":0.16,"return_home_after":false,"home_duration_s":6.0}'
 ```
 
 If marker `6` is not currently visible, use reactive search instead of the old
@@ -124,7 +124,7 @@ separate door-opening motion; use the existing marker search and touch flow.
 ```bash
 curl -sS -X POST http://127.0.0.1:8893/tools/touch-marker \
   -H 'Content-Type: application/json' \
-  -d '{"execute":true,"lease_id":"<LEASE_ID>","pre_clearance_m":0.05,"final_clearance_m":0.005,"retract_after":false,"retract_distance_m":0.05,"final_velocity_scaling":0.12,"return_home_after":false,"home_duration_s":6.0}'
+  -d '{"execute":true,"lease_id":"<LEASE_ID>","pre_clearance_m":0.05,"final_clearance_m":0.005,"retract_after":false,"retract_distance_m":0.05,"final_velocity_scaling":0.16,"return_home_after":false,"home_duration_s":6.0}'
 ```
 
 The touch planner targets the `tcp_link` contact point at the ArUco marker center using one MoveIt plan from the current robot state. The ROS 2 stack prefers elbow/wrist motion by keeping `joint1` near its current angle during planning.

@@ -75,6 +75,9 @@ public:
     point_cloud_topic_ = declare_parameter<std::string>(
       "point_cloud_topic", "/camera/camera/depth/color/points");
     planning_group_ = declare_parameter<std::string>("planning_group", "arm");
+    move_group_namespace_ = declare_parameter<std::string>("move_group_namespace", "");
+    planning_scene_ = std::make_unique<moveit::planning_interface::PlanningSceneInterface>(
+      move_group_namespace_);
     end_effector_link_ = declare_parameter<std::string>("end_effector_link", "tcp_link");
     base_frame_ = declare_parameter<std::string>("base_frame", "base_link");
     clearance_ = declare_parameter<double>("clearance", 0.05);
@@ -139,8 +142,10 @@ public:
 
   void initialise_moveit()
   {
+    moveit::planning_interface::MoveGroupInterface::Options options(
+      planning_group_, "robot_description", move_group_namespace_);
     move_group_ = std::make_unique<moveit::planning_interface::MoveGroupInterface>(
-      shared_from_this(), planning_group_);
+      shared_from_this(), options);
     move_group_->setEndEffectorLink(end_effector_link_);
     move_group_->setPoseReferenceFrame(base_frame_);
     move_group_->setMaxVelocityScalingFactor(velocity_scaling_);
@@ -151,8 +156,8 @@ public:
     move_group_->setGoalOrientationTolerance(goal_orientation_tolerance_);
     RCLCPP_INFO(
       get_logger(),
-      "MoveIt ready: group=%s, tip=%s, frame=%s, execute=%s, prefer_elbow_motion=%s",
-      planning_group_.c_str(), end_effector_link_.c_str(), base_frame_.c_str(),
+      "MoveIt ready: group=%s, namespace=%s, tip=%s, frame=%s, execute=%s, prefer_elbow_motion=%s",
+      planning_group_.c_str(), move_group_namespace_.c_str(), end_effector_link_.c_str(), base_frame_.c_str(),
       execute_ ? "true" : "false", prefer_elbow_motion_ ? "true" : "false");
   }
 
@@ -361,7 +366,7 @@ private:
     wall.primitives.push_back(box);
     wall.primitive_poses.push_back(pose);
     wall.operation = moveit_msgs::msg::CollisionObject::ADD;
-    planning_scene_.applyCollisionObject(wall);
+    planning_scene_->applyCollisionObject(wall);
   }
 
   geometry_msgs::msg::PoseStamped target_pose(
@@ -650,6 +655,7 @@ private:
   std::string aruco_pose_topic_;
   std::string point_cloud_topic_;
   std::string planning_group_;
+  std::string move_group_namespace_;
   std::string end_effector_link_;
   std::string base_frame_;
   double clearance_{};
@@ -683,7 +689,7 @@ private:
   std::optional<sensor_msgs::msg::PointCloud2> cloud_;
   tf2_ros::Buffer tf_buffer_;
   tf2_ros::TransformListener tf_listener_;
-  moveit::planning_interface::PlanningSceneInterface planning_scene_;
+  std::unique_ptr<moveit::planning_interface::PlanningSceneInterface> planning_scene_;
   std::unique_ptr<moveit::planning_interface::MoveGroupInterface> move_group_;
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr aruco_subscription_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_subscription_;

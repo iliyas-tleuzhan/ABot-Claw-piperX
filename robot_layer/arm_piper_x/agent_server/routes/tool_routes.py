@@ -16,7 +16,7 @@ class MarkerTaskRequest(BaseModel):
     final_clearance_m: float = Field(default=0.005)
     retract_after: bool = False
     retract_distance_m: float = Field(default=0.05)
-    final_velocity_scaling: float = Field(default=0.12)
+    final_velocity_scaling: float = Field(default=0.16)
     return_home_after: bool = False
     home_duration_s: float = Field(default=6.0)
 

@@ -60,8 +60,10 @@ target_link_libraries(search_marker_node "${cpp_typesupport_target}")
 
 install(TARGETS wall_approach_node search_marker_node DESTINATION lib/${PROJECT_NAME})
 install(PROGRAMS
+  scripts/front_piper_joint_state_adapter.py
   scripts/piper_touch_marker_api.py
   scripts/piper_touch_marker_client.py
+  scripts/piper_x_control_gate.py
   scripts/publish_handeye_tf.py
   DESTINATION lib/${PROJECT_NAME}
 )
@@ -71,6 +73,7 @@ if(BUILD_TESTING)
   find_package(ament_cmake_pytest REQUIRED)
   ament_add_pytest_test(test_piper_touch_marker_api test/test_piper_touch_marker_api.py)
   ament_add_pytest_test(test_launch_files test/test_launch_files.py)
+  ament_add_pytest_test(test_front_piper_joint_state_adapter test/test_front_piper_joint_state_adapter.py)
   ament_add_pytest_test(test_skill_contract test/test_skill_contract.py)
 endif()
 
