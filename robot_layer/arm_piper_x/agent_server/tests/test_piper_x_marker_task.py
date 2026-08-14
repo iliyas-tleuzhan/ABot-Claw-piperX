@@ -76,6 +76,19 @@ class PiperXMarkerParserTest(unittest.TestCase):
         self.assertEqual(parsed["action"], "home")
         self.assertIn(" home ", parsed["command_text"])
 
+    def test_nav_pose_routes_to_nav_pose_endpoint(self):
+        parsed = self.parse("rear arm go nav pose")
+        self.assertEqual(parsed["action"], "nav-pose")
+        self.assertEqual(parsed["arm"], "rear")
+        self.assertIn("nav-pose", parsed["command_text"])
+        self.assertIn("--arm rear", parsed["command_text"])
+
+    def test_front_arm_is_default(self):
+        parsed = self.parse("front arm search for the marker")
+        self.assertEqual(parsed["action"], "search")
+        self.assertEqual(parsed["arm"], "front")
+        self.assertIn("--arm front", parsed["command_text"])
+
     def test_save_home_routes_to_non_motion_snapshot(self):
         parsed = self.parse("save current pose as home")
         self.assertEqual(parsed["action"], "save-home")

@@ -91,6 +91,7 @@ local_http_api:
   search_step: /tools/search-step
   go_found_marker: /tools/go-found-marker
   save_found_marker: /tools/save-found-marker
+  go_nav_pose: /tools/go-nav-pose
   go_home: /tools/go-home
   save_home: /tools/save-home
   go_previous: /tools/go-previous

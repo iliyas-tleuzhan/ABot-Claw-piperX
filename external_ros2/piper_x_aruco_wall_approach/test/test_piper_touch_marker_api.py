@@ -65,6 +65,19 @@ class FakeAdapter(api.RosMarkerTaskAdapter):
             "message": "Agx_arm enabled",
         }
 
+    def ensure_selected_arm_enabled(self, arm):
+        self.calls.append(("enable-arm", arm))
+        if self.delay_s:
+            time.sleep(self.delay_s)
+        if self.exc:
+            raise self.exc
+        return {
+            "success": True,
+            "stage": "arm_enabled",
+            "message": "Agx_arm enabled",
+            "arm": arm,
+        }
+
     def search_marker(self, request):
         self.calls.append(("search", request))
         if self.delay_s:
@@ -116,6 +129,21 @@ class FakeAdapter(api.RosMarkerTaskAdapter):
             "message": "found_marker trajectory completed",
             "contact_confirmed": False,
             "completion_type": "saved_found_marker_pose",
+        }
+
+    def go_nav_pose(self, request):
+        self.calls.append(("nav-pose", request))
+        if self.delay_s:
+            time.sleep(self.delay_s)
+        if self.exc:
+            raise self.exc
+        return {
+            "success": True,
+            "stage": "complete",
+            "message": "nav_pose trajectory completed",
+            "contact_confirmed": False,
+            "completion_type": "saved_nav_pose_pose",
+            "arm": request.arm,
         }
 
     def save_home(self, request):
@@ -364,12 +392,28 @@ def test_successful_mocked_home():
     assert adapter.calls[0][0] == "home"
 
 
+def test_default_home_pose_file_is_zero_pose():
+    home_file = pathlib.Path(__file__).resolve().parents[1] / "config" / "piper_x_home_pose.yaml"
+    names, positions = api.MarkerTaskBridge._load_home_pose(str(home_file))
+    assert names == ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
+    assert positions == [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+
 def test_successful_mocked_previous():
     adapter = FakeAdapter()
     response = client(adapter).post("/tools/piper/go-previous", json={"execute": False})
     assert response.status_code == 200
     assert response.json()["completion_type"] == "saved_previous_pose"
     assert adapter.calls[0][0] == "previous"
+
+
+def test_successful_mocked_nav_pose_rear():
+    adapter = FakeAdapter()
+    response = client(adapter).post("/tools/piper/go-nav-pose", json={"execute": False, "arm": "rear"})
+    assert response.status_code == 200
+    assert response.json()["completion_type"] == "saved_nav_pose_pose"
+    assert response.json()["arm"] == "rear"
+    assert adapter.calls[0][0] == "nav-pose"
 
 
 def test_successful_mocked_save_home():

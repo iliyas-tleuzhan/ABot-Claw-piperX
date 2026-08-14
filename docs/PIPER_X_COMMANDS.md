@@ -4,8 +4,8 @@ This file is for the Orin setup:
 
 - Orin SSH: `dase-orin@192.168.1.148`
 - Docker container: `iliyas-abot`
-- front PiPER-X arm CAN: `can2`
-- rear PiPER-X arm CAN: `can3`
+- front PiPER-X arm CAN: `can3`
+- rear PiPER-X arm CAN: `can2`
 - Bunker CAN: `can4`
 - Camera: RealSense D435i
 - Low-level PiPER-X API: `http://127.0.0.1:8892`
@@ -29,7 +29,7 @@ source /opt/ros/humble/setup.bash
 source /workspace/agx_arm_ws/install/setup.bash
 ```
 
-## Start The Full PiPER-X Stack
+## Start The Full PiPER-X Stack Manually
 
 Inside `iliyas-abot`:
 
@@ -45,7 +45,7 @@ ros2 launch piper_x_aruco_wall_approach touch_marker_full_stack.launch.py \
   point_cloud_topic:=/camera/camera/depth/color/points \
   marker_id:=6 \
   marker_size:=0.03 \
-  can_port:=can2 \
+  can_port:=can3 \
   pub_rate:=80 \
   joint_state_timeout:=2.5 \
   auto_enable:=true \
@@ -68,7 +68,7 @@ nohup ros2 launch piper_x_aruco_wall_approach touch_marker_full_stack.launch.py 
   point_cloud_topic:=/camera/camera/depth/color/points \
   marker_id:=6 \
   marker_size:=0.03 \
-  can_port:=can2 \
+  can_port:=can3 \
   pub_rate:=80 \
   joint_state_timeout:=2.5 \
   auto_enable:=true \
@@ -186,8 +186,13 @@ These commands hit port `8892` directly and do not need OpenClaw natural languag
 ```bash
 curl -s -X POST http://127.0.0.1:8892/tools/piper/search-marker \
   -H 'Content-Type: application/json' \
-  -d '{"execute":true,"direction":"auto","max_steps":100}' | python3 -m json.tool
+  -d '{"execute":true,"direction":"auto"}' | python3 -m json.tool
 ```
+
+Full `direction:"auto"` search is bounded by the robot joint sweep, not by a
+max-step counter. It raises joint4 while scanning left/right, repeats at joint1
+sectors `+1.6`, positive limit, `-1.6`, and negative limit, then returns joint1
+and joint4 to zero if marker 6 is not found.
 
 Search one step:
 
@@ -247,10 +252,26 @@ curl -s -X POST http://127.0.0.1:8892/tools/piper/save-home \
 
 ### Go Home
 
+Default home for both arms is the neutral six-joint zero pose:
+
+```text
+[0, 0, 0, 0, 0, 0]
+```
+
+Use `go-nav-pose` for Trystan's parked/navigation pose.
+
 ```bash
 curl -s -X POST http://127.0.0.1:8892/tools/piper/go-home \
   -H 'Content-Type: application/json' \
-  -d '{"execute":true,"duration_s":6.0}' | python3 -m json.tool
+  -d '{"execute":true,"arm":"front","duration_s":6.0}' | python3 -m json.tool
+```
+
+Rear arm:
+
+```bash
+curl -s -X POST http://127.0.0.1:8892/tools/piper/go-home \
+  -H 'Content-Type: application/json' \
+  -d '{"execute":true,"arm":"rear","duration_s":6.0}' | python3 -m json.tool
 ```
 
 ### Save / Go To Previous Pose
@@ -264,7 +285,32 @@ curl -s -X POST http://127.0.0.1:8892/tools/piper/save-previous \
 ```bash
 curl -s -X POST http://127.0.0.1:8892/tools/piper/go-previous \
   -H 'Content-Type: application/json' \
-  -d '{"execute":true,"duration_s":6.0}' | python3 -m json.tool
+  -d '{"execute":true,"arm":"front","duration_s":6.0}' | python3 -m json.tool
+```
+
+### Go To Navigation Pose
+
+Trystan's parked/navigation poses are:
+
+```text
+front: [-1.6, 0, 0, 0, 0, 0]
+rear:  [ 1.6, 0, 0, 0, 0, 0]
+```
+
+Front arm:
+
+```bash
+curl -s -X POST http://127.0.0.1:8892/tools/piper/go-nav-pose \
+  -H 'Content-Type: application/json' \
+  -d '{"execute":true,"arm":"front","duration_s":6.0}' | python3 -m json.tool
+```
+
+Rear arm:
+
+```bash
+curl -s -X POST http://127.0.0.1:8892/tools/piper/go-nav-pose \
+  -H 'Content-Type: application/json' \
+  -d '{"execute":true,"arm":"rear","duration_s":6.0}' | python3 -m json.tool
 ```
 
 ### Save / Go To Found Marker Pose
@@ -278,7 +324,7 @@ curl -s -X POST http://127.0.0.1:8892/tools/piper/save-found-marker \
 ```bash
 curl -s -X POST http://127.0.0.1:8892/tools/piper/go-found-marker \
   -H 'Content-Type: application/json' \
-  -d '{"execute":true,"duration_s":6.0}' | python3 -m json.tool
+  -d '{"execute":true,"arm":"front","duration_s":6.0}' | python3 -m json.tool
 ```
 
 ### Stop / Disable Motion Gate
@@ -341,8 +387,7 @@ show("health", health)
 if not health.get("marker_visible"):
     show("search", post("/tools/piper/search-marker", {
         "execute": True,
-        "direction": "auto",
-        "max_steps": 100
+        "direction": "auto"
     }, timeout=600))
 
 show("touch", post("/tools/piper/touch-marker", {
@@ -366,7 +411,7 @@ curl -s http://127.0.0.1:8893/health | python3 -m json.tool
 ```bash
 curl -s -X POST http://127.0.0.1:8893/tools/search-marker \
   -H 'Content-Type: application/json' \
-  -d '{"execute":true,"max_steps":100}' | python3 -m json.tool
+  -d '{"execute":true}' | python3 -m json.tool
 ```
 
 ```bash

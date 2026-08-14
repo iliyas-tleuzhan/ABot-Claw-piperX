@@ -27,6 +27,46 @@ import uvicorn
 from piper_x_aruco_wall_approach.srv import RunMarkerTask, SearchMarker
 
 
+SUPPORTED_ARMS = {"front", "rear"}
+
+
+def normalize_arm(arm: str) -> str:
+    value = str(arm or "front").strip().lower()
+    aliases = {
+        "front_piper": "front",
+        "/front_piper": "front",
+        "rear_piper": "rear",
+        "/rear_piper": "rear",
+        "back": "rear",
+        "back_piper": "rear",
+        "/back_piper": "rear",
+    }
+    value = aliases.get(value, value)
+    if value not in SUPPORTED_ARMS:
+        raise ValueError("arm must be 'front' or 'rear'")
+    return value
+
+
+def arm_namespace(arm: str) -> str:
+    return f"/{normalize_arm(arm)}_piper"
+
+
+def arm_joint_state_topic(arm: str) -> str:
+    return f"{arm_namespace(arm)}/feedback/joint_states"
+
+
+def arm_trajectory_action(arm: str) -> str:
+    return f"{arm_namespace(arm)}/arm_controller/follow_joint_trajectory"
+
+
+def arm_enable_service(arm: str) -> str:
+    return f"{arm_namespace(arm)}/enable_agx_arm"
+
+
+def nav_pose_positions(arm: str) -> list[float]:
+    return [-1.6, 0.0, 0.0, 0.0, 0.0, 0.0] if normalize_arm(arm) == "front" else [1.6, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+
 def namespace_from_action(action_name: str) -> str:
     parts = action_name.strip("/").split("/")
     if len(parts) <= 2:
@@ -45,6 +85,7 @@ def token_from_env() -> Optional[str]:
 
 class MarkerTaskRequest(BaseModel):
     execute: bool = False
+    arm: str = Field(default="front")
     pre_clearance_m: float = Field(default=0.05)
     final_clearance_m: float = Field(default=0.005)
     retract_after: bool = True
@@ -56,12 +97,14 @@ class MarkerTaskRequest(BaseModel):
 
 class SearchMarkerRequest(BaseModel):
     execute: bool = False
+    arm: str = Field(default="front")
     direction: str = Field(default="auto")
     max_steps: int = Field(default=100)
 
 
 class HomeRequest(BaseModel):
     execute: bool = False
+    arm: str = Field(default="front")
     duration_s: float = Field(default=6.0)
 
 
@@ -177,6 +220,9 @@ class RosMarkerTaskAdapter:
     def go_found_marker(self, request: HomeRequest) -> Dict[str, Any]:
         raise NotImplementedError
 
+    def go_nav_pose(self, request: HomeRequest) -> Dict[str, Any]:
+        raise NotImplementedError
+
     def save_found_marker(self) -> Dict[str, Any]:
         raise NotImplementedError
 
@@ -196,6 +242,7 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         joint_state_topic: str,
         joint_state_timeout_s: float,
         trajectory_action: str,
+        enable_service: str,
     ):
         super().__init__("piper_touch_marker_api_bridge")
         self.marker_pose_topic = marker_pose_topic
@@ -207,6 +254,7 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         self.joint_state_topic = joint_state_topic
         self.joint_state_timeout_s = joint_state_timeout_s
         self.trajectory_action = trajectory_action
+        self.enable_service = enable_service
         self.home_pose_file = str(Path(home_pose_file).expanduser())
         self.previous_pose_file = str(Path(previous_pose_file).expanduser())
         self.found_marker_pose_file = str(Path(found_marker_pose_file).expanduser())
@@ -229,15 +277,51 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         self._lock = threading.Lock()
         self._client = self.create_client(RunMarkerTask, "/run_marker_task")
         self._search_client = self.create_client(SearchMarker, "/search_marker")
-        self._enable_client = self.create_client(SetBool, "/enable_agx_arm")
+        self._enable_client = self.create_client(SetBool, self.enable_service)
         self._home_client = ActionClient(
             self,
             FollowJointTrajectory,
             self.trajectory_action,
         )
+        self._enable_clients: dict[str, Any] = {"front": self._enable_client}
+        self._trajectory_clients: dict[str, Any] = {"front": self._home_client}
+        self._joint_state_topics_by_arm = {
+            "front": arm_joint_state_topic("front"),
+            "rear": arm_joint_state_topic("rear"),
+        }
+        self._joint_states_by_arm: dict[str, JointState] = {}
+        self._joint_state_received_by_arm: dict[str, float] = {}
         self.create_subscription(PoseStamped, marker_pose_topic, self._marker_callback, 10)
         self.create_subscription(PointCloud2, point_cloud_topic, self._cloud_callback, 10)
         self.create_subscription(JointState, joint_state_topic, self._joint_state_callback, 10)
+        for arm, topic in self._joint_state_topics_by_arm.items():
+            if topic != joint_state_topic:
+                self.create_subscription(
+                    JointState,
+                    topic,
+                    lambda msg, selected_arm=arm: self._arm_joint_state_callback(selected_arm, msg),
+                    10,
+                )
+
+    def _client_for_arm(self, arm: str):
+        selected = normalize_arm(arm)
+        if selected == "front":
+            return self._home_client
+        if selected not in self._trajectory_clients:
+            self._trajectory_clients[selected] = ActionClient(
+                self,
+                FollowJointTrajectory,
+                arm_trajectory_action(selected),
+            )
+        return self._trajectory_clients[selected]
+
+    def _enable_client_for_arm(self, arm: str):
+        selected = normalize_arm(arm)
+        if selected == "front":
+            return self._enable_client
+        if selected not in self._enable_clients:
+            self._enable_clients[selected] = self.create_client(SetBool, arm_enable_service(selected))
+        return self._enable_clients[selected]
 
     @staticmethod
     def _default_home_pose_file() -> str:
@@ -308,6 +392,14 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
             self._latest_joint_state = msg
             self._joint_state_received_monotonic_s = time.monotonic()
             self._joint_state_header_stamp_s = self._stamp_to_seconds(msg)
+            self._joint_states_by_arm["front"] = msg
+            self._joint_state_received_by_arm["front"] = self._joint_state_received_monotonic_s
+
+    def _arm_joint_state_callback(self, arm: str, msg: JointState) -> None:
+        with self._lock:
+            now = time.monotonic()
+            self._joint_states_by_arm[normalize_arm(arm)] = msg
+            self._joint_state_received_by_arm[normalize_arm(arm)] = now
 
     def health(self) -> HealthSnapshot:
         now_monotonic_s = time.monotonic()
@@ -386,6 +478,8 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         )
 
     def run_task(self, mode: str, request: MarkerTaskRequest) -> Dict[str, Any]:
+        if normalize_arm(request.arm) != "front":
+            raise RuntimeError("marker approach/touch is currently implemented only for arm='front'")
         if not self._client.wait_for_service(timeout_sec=1.0):
             raise RuntimeError("ROS service /run_marker_task is not available")
 
@@ -416,29 +510,38 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         }
 
     def ensure_arm_enabled(self) -> Dict[str, Any]:
-        if not self._enable_client.wait_for_service(timeout_sec=1.0):
-            raise RuntimeError("ROS service /enable_agx_arm is not available")
+        return self.ensure_selected_arm_enabled("front")
+
+    def ensure_selected_arm_enabled(self, arm: str) -> Dict[str, Any]:
+        selected = normalize_arm(arm)
+        client = self._enable_client_for_arm(selected)
+        service_name = self.enable_service if selected == "front" else arm_enable_service(selected)
+        if not client.wait_for_service(timeout_sec=1.0):
+            raise RuntimeError(f"ROS service {service_name} is not available")
 
         service_request = SetBool.Request()
         service_request.data = True
-        future = self._enable_client.call_async(service_request)
+        future = client.call_async(service_request)
         deadline = time.monotonic() + 10.0
         while rclpy.ok() and not future.done() and time.monotonic() < deadline:
             time.sleep(0.05)
         if not future.done():
-            raise TimeoutError("timed out waiting for /enable_agx_arm response")
+            raise TimeoutError(f"timed out waiting for {service_name} response")
         response = future.result()
         if response is None:
-            raise RuntimeError("ROS service /enable_agx_arm returned no response")
+            raise RuntimeError(f"ROS service {service_name} returned no response")
         if not bool(response.success):
             raise RuntimeError(f"failed to enable PiPER-X arm: {response.message}")
         return {
             "success": True,
             "stage": "arm_enabled",
             "message": str(response.message),
+            "arm": selected,
         }
 
     def search_marker(self, request: SearchMarkerRequest) -> Dict[str, Any]:
+        if normalize_arm(request.arm) != "front":
+            raise RuntimeError("marker search is currently implemented only for arm='front'")
         if not self._search_client.wait_for_service(timeout_sec=1.0):
             raise RuntimeError("ROS service /search_marker is not available")
 
@@ -473,8 +576,11 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         positions,
         request: HomeRequest,
     ) -> Dict[str, Any]:
-        if not self._home_client.wait_for_server(timeout_sec=1.0):
-            raise RuntimeError(f"action {self.trajectory_action} is not available")
+        selected_arm = normalize_arm(request.arm)
+        trajectory_action = self.trajectory_action if selected_arm == "front" else arm_trajectory_action(selected_arm)
+        client = self._client_for_arm(selected_arm)
+        if not client.wait_for_server(timeout_sec=1.0):
+            raise RuntimeError(f"action {trajectory_action} is not available")
         if joint_names is None or positions is None:
             raise RuntimeError(f"saved pose '{pose_name}' is not available")
         if not request.execute:
@@ -484,6 +590,8 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
                 "message": f"{pose_name} pose command is ready (execute=false)",
                 "contact_confirmed": False,
                 "completion_type": f"saved_{pose_name}_pose",
+                "arm": selected_arm,
+                "trajectory_action": trajectory_action,
             }
 
         goal = FollowJointTrajectory.Goal()
@@ -499,7 +607,7 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         goal.trajectory.points = [point]
         goal.goal_time_tolerance = Duration(sec=2, nanosec=0)
 
-        send_future = self._home_client.send_goal_async(goal)
+        send_future = client.send_goal_async(goal)
         deadline = time.monotonic() + 10.0
         while rclpy.ok() and not send_future.done() and time.monotonic() < deadline:
             time.sleep(0.05)
@@ -526,6 +634,8 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
                 "message": f"{pose_name} trajectory failed with error_code={error_code}",
                 "contact_confirmed": False,
                 "completion_type": f"saved_{pose_name}_pose",
+                "arm": selected_arm,
+                "trajectory_action": trajectory_action,
             }
         return {
             "success": True,
@@ -533,6 +643,8 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
             "message": f"{pose_name} trajectory completed",
             "contact_confirmed": False,
             "completion_type": f"saved_{pose_name}_pose",
+            "arm": selected_arm,
+            "trajectory_action": trajectory_action,
         }
 
     def go_home(self, request: HomeRequest) -> Dict[str, Any]:
@@ -561,6 +673,15 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
             "found_marker",
             self.found_marker_joint_names,
             self.found_marker_positions,
+            request,
+        )
+
+    def go_nav_pose(self, request: HomeRequest) -> Dict[str, Any]:
+        selected_arm = normalize_arm(request.arm)
+        return self._execute_saved_joint_pose(
+            "nav_pose",
+            ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"],
+            nav_pose_positions(selected_arm),
             request,
         )
 
@@ -607,7 +728,7 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
             "arm": {
                 "arm_type": "piper_x",
                 "effector_type": "agx_gripper",
-                "can_port": "can2",
+                "can_port": "can3",
             },
             "moveit": {
                 "planning_group": "arm",
@@ -696,6 +817,9 @@ class FakeUnavailableAdapter(RosMarkerTaskAdapter):
     def go_found_marker(self, request: HomeRequest) -> Dict[str, Any]:
         raise RuntimeError("ROS adapter not initialized")
 
+    def go_nav_pose(self, request: HomeRequest) -> Dict[str, Any]:
+        raise RuntimeError("ROS adapter not initialized")
+
     def save_found_marker(self) -> Dict[str, Any]:
         raise RuntimeError("ROS adapter not initialized")
 
@@ -705,8 +829,17 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
     command_lock = threading.Lock()
 
     def validate_request(mode: str, request: MarkerTaskRequest) -> None:
+        try:
+            selected_arm = normalize_arm(request.arm)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         if mode not in {"approach", "touch"}:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"unsupported mode: {mode}")
+        if selected_arm != "front":
+            raise HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail="marker approach/touch is currently implemented only for arm='front'",
+            )
         if mode == "approach" and (not math.isfinite(request.pre_clearance_m) or request.pre_clearance_m < 0.0):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -728,9 +861,13 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
                     detail="final_velocity_scaling must be in (0.0, 0.25]",
                 )
         if request.return_home_after:
-            validate_home_request(HomeRequest(execute=request.execute, duration_s=request.home_duration_s))
+            validate_home_request(HomeRequest(execute=request.execute, arm=request.arm, duration_s=request.home_duration_s))
 
     def validate_home_request(request: HomeRequest) -> None:
+        try:
+            normalize_arm(request.arm)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         if not math.isfinite(request.duration_s) or request.duration_s <= 0.0 or request.duration_s > 30.0:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -773,6 +910,11 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
     def health(_: None = Depends(require_auth)) -> Dict[str, Any]:
         return adapter.health().as_dict()
 
+    def ensure_request_arm_enabled(arm: str) -> Dict[str, Any]:
+        if hasattr(adapter, "ensure_selected_arm_enabled"):
+            return adapter.ensure_selected_arm_enabled(arm)  # type: ignore[attr-defined]
+        return adapter.ensure_arm_enabled()
+
     def run_endpoint(mode: str, request: MarkerTaskRequest) -> Dict[str, Any]:
         validate_request(mode, request)
         health_snapshot = adapter.health()
@@ -784,11 +926,11 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
         if not command_lock.acquire(blocking=False):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="another PiPER marker task is active")
         try:
-            arm_enable_result = adapter.ensure_arm_enabled() if request.execute else None
+            arm_enable_result = ensure_request_arm_enabled(request.arm) if request.execute else None
             search_result = None
             if not health_snapshot.marker_pose_available:
                 require_search_readiness(health_snapshot)
-                search_result = adapter.search_marker(SearchMarkerRequest(execute=request.execute))
+                search_result = adapter.search_marker(SearchMarkerRequest(execute=request.execute, arm=request.arm))
                 if not search_result.get("marker_found", False):
                     raise HTTPException(
                         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -806,7 +948,7 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail="home trajectory action unavailable",
                 )
-            previous_saved = adapter.save_previous() if request.execute else None
+            previous_saved = adapter.save_previous() if request.execute and normalize_arm(request.arm) == "front" else None
             result = adapter.run_task(mode, request)
             if search_result is not None and "search_result" not in result:
                 result["search_result"] = search_result
@@ -815,7 +957,7 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
             if previous_saved is not None:
                 result["previous_pose_saved_before_motion"] = previous_saved
             if result.get("success", False) and request.execute and request.return_home_after:
-                home_result = adapter.go_home(HomeRequest(execute=True, duration_s=request.home_duration_s))
+                home_result = adapter.go_home(HomeRequest(execute=True, arm=request.arm, duration_s=request.home_duration_s))
                 result["return_home_after"] = home_result
                 if not home_result.get("success", False):
                     result = {
@@ -843,6 +985,15 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
         return result
 
     def run_search_endpoint(request: SearchMarkerRequest) -> Dict[str, Any]:
+        try:
+            selected_arm = normalize_arm(request.arm)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        if selected_arm != "front":
+            raise HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail="marker search is currently implemented only for arm='front'",
+            )
         health_snapshot = adapter.health()
         if request.execute and not health_snapshot.execution_allowed:
             raise HTTPException(
@@ -854,7 +1005,7 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="another PiPER marker task is active")
         try:
             if request.execute:
-                adapter.ensure_arm_enabled()
+                ensure_request_arm_enabled(request.arm)
             result = adapter.search_marker(request)
             if result.get("success", False) and result.get("marker_found", False):
                 found_marker_saved = adapter.save_found_marker()
@@ -921,7 +1072,7 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="physical execution is disabled; set PIPER_TOUCH_ALLOW_EXECUTION=1",
             )
-        if not health_snapshot.home_action_available:
+        if normalize_arm(request.arm) == "front" and not health_snapshot.home_action_available:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="home trajectory action unavailable",
@@ -929,8 +1080,8 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
         if not command_lock.acquire(blocking=False):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="another PiPER marker task is active")
         try:
-            arm_enable_result = adapter.ensure_arm_enabled() if request.execute else None
-            previous_saved = adapter.save_previous() if request.execute else None
+            arm_enable_result = ensure_request_arm_enabled(request.arm) if request.execute else None
+            previous_saved = adapter.save_previous() if request.execute and normalize_arm(request.arm) == "front" else None
             result = adapter.go_home(request)
             if arm_enable_result is not None:
                 result["arm_enable"] = arm_enable_result
@@ -954,7 +1105,7 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="physical execution is disabled; set PIPER_TOUCH_ALLOW_EXECUTION=1",
             )
-        if not health_snapshot.home_action_available:
+        if normalize_arm(request.arm) == "front" and not health_snapshot.home_action_available:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="trajectory action unavailable",
@@ -962,7 +1113,7 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
         if not command_lock.acquire(blocking=False):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="another PiPER marker task is active")
         try:
-            arm_enable_result = adapter.ensure_arm_enabled() if request.execute else None
+            arm_enable_result = ensure_request_arm_enabled(request.arm) if request.execute else None
             result = adapter.go_previous(request)
             if arm_enable_result is not None:
                 result["arm_enable"] = arm_enable_result
@@ -984,18 +1135,41 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="physical execution is disabled; set PIPER_TOUCH_ALLOW_EXECUTION=1",
             )
-        if not health_snapshot.home_action_available:
+        if not command_lock.acquire(blocking=False):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="another PiPER marker task is active")
+        try:
+            arm_enable_result = ensure_request_arm_enabled(request.arm) if request.execute else None
+            result = adapter.go_found_marker(request)
+            if arm_enable_result is not None:
+                result["arm_enable"] = arm_enable_result
+        except TimeoutError as exc:
+            raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+        finally:
+            command_lock.release()
+        if not result.get("success", False):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=result)
+        return result
+
+    def run_nav_pose_endpoint(request: HomeRequest) -> Dict[str, Any]:
+        validate_home_request(request)
+        health_snapshot = adapter.health()
+        if request.execute and not health_snapshot.execution_allowed:
             raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="trajectory action unavailable",
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="physical execution is disabled; set PIPER_TOUCH_ALLOW_EXECUTION=1",
             )
         if not command_lock.acquire(blocking=False):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="another PiPER marker task is active")
         try:
-            arm_enable_result = adapter.ensure_arm_enabled() if request.execute else None
-            result = adapter.go_found_marker(request)
+            arm_enable_result = ensure_request_arm_enabled(request.arm) if request.execute else None
+            previous_saved = adapter.save_previous() if request.execute and normalize_arm(request.arm) == "front" else None
+            result = adapter.go_nav_pose(request)
             if arm_enable_result is not None:
                 result["arm_enable"] = arm_enable_result
+            if previous_saved is not None:
+                result["previous_pose_saved_before_motion"] = previous_saved
         except TimeoutError as exc:
             raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail=str(exc)) from exc
         except Exception as exc:
@@ -1042,6 +1216,7 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
             )
         step_request = SearchMarkerRequest(
             execute=request.execute,
+            arm=request.arm,
             direction=request.direction,
             max_steps=1,
         )
@@ -1067,6 +1242,13 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
         _: None = Depends(require_auth),
     ) -> Dict[str, Any]:
         return run_found_marker_endpoint(request)
+
+    @app.post("/tools/piper/go-nav-pose")
+    def go_nav_pose(
+        request: HomeRequest,
+        _: None = Depends(require_auth),
+    ) -> Dict[str, Any]:
+        return run_nav_pose_endpoint(request)
 
     @app.post("/tools/piper/save-home")
     def save_home(
@@ -1118,6 +1300,7 @@ def main() -> None:
         "--trajectory-action",
         default="/arm_controller/follow_joint_trajectory",
     )
+    parser.add_argument("--enable-service", default="/enable_agx_arm")
     args, _ros_args = parser.parse_known_args()
 
     rclpy.init()
@@ -1136,6 +1319,7 @@ def main() -> None:
         joint_state_topic=args.joint_state_topic,
         joint_state_timeout_s=args.joint_state_timeout_s,
         trajectory_action=args.trajectory_action,
+        enable_service=args.enable_service,
     )
     executor = rclpy.executors.MultiThreadedExecutor()
     executor.add_node(adapter)

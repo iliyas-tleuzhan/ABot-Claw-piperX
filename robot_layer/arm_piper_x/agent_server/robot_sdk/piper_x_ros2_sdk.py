@@ -67,6 +67,9 @@ class PiperXAgentSdk:
     def go_found_marker(self, payload: dict) -> tuple[int, dict]:
         return self._request("POST", "/tools/piper/go-found-marker", payload)
 
+    def go_nav_pose(self, payload: dict) -> tuple[int, dict]:
+        return self._request("POST", "/tools/piper/go-nav-pose", payload)
+
     def save_found_marker(self) -> tuple[int, dict]:
         return self._request("POST", "/tools/piper/save-found-marker", {})
 

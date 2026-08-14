@@ -94,6 +94,10 @@ class FakeSdk:
         self.calls.append(("found-marker", payload))
         return 200, {"success": True, "stage": "complete", "message": "found marker pose ok"}
 
+    def go_nav_pose(self, payload):
+        self.calls.append(("nav-pose", payload))
+        return 200, {"success": True, "stage": "complete", "message": "nav pose ok"}
+
     def save_found_marker(self):
         self.calls.append(("save-found-marker", {}))
         return 200, {"success": True, "stage": "complete", "message": "found marker pose saved"}
@@ -311,6 +315,14 @@ class PiperXAgentServerTest(unittest.TestCase):
         self.assertEqual(result.status_code, 200)
         self.assertEqual(sdk.calls[0][0], "found-marker")
         self.assertNotIn("lease_id", sdk.calls[0][1])
+
+    def test_nav_pose_supports_rear_arm_payload(self):
+        client, sdk, _env, _state = make_client()
+        result = client.post("/tools/go-nav-pose", json={"execute": False, "arm": "rear", "duration_s": 4.0})
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(sdk.calls[0][0], "nav-pose")
+        self.assertEqual(sdk.calls[0][1]["arm"], "rear")
+        self.assertEqual(sdk.calls[0][1]["duration_s"], 4.0)
 
     def test_save_found_marker_proxies_without_execution_lease(self):
         client, sdk, _env, _state = make_client()

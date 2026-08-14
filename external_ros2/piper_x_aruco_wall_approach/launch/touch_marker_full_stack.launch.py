@@ -23,6 +23,10 @@ def generate_launch_description():
     goal_orientation_tolerance = LaunchConfiguration("goal_orientation_tolerance")
     piper_namespace = LaunchConfiguration("piper_namespace")
     use_piper_motion_stack = LaunchConfiguration("use_piper_motion_stack")
+    use_aruco_detector = LaunchConfiguration("use_aruco_detector")
+    use_wall_approach_node = LaunchConfiguration("use_wall_approach_node")
+    use_search_marker_node = LaunchConfiguration("use_search_marker_node")
+    use_marker_api = LaunchConfiguration("use_marker_api")
     can_port = LaunchConfiguration("can_port")
     auto_enable = LaunchConfiguration("auto_enable")
     follow = LaunchConfiguration("follow")
@@ -52,6 +56,7 @@ def generate_launch_description():
     joint_state_topic = LaunchConfiguration("joint_state_topic")
     joint_state_timeout = LaunchConfiguration("joint_state_timeout")
     trajectory_action = LaunchConfiguration("trajectory_action")
+    enable_service = LaunchConfiguration("enable_service")
     control_topic = LaunchConfiguration("control_topic")
     robot_description_topic = LaunchConfiguration("robot_description_topic")
     robot_description_semantic_topic = LaunchConfiguration("robot_description_semantic_topic")
@@ -79,8 +84,12 @@ def generate_launch_description():
         DeclareLaunchArgument("goal_orientation_tolerance", default_value="0.35"),
         DeclareLaunchArgument("piper_namespace", default_value="front_piper"),
         DeclareLaunchArgument("use_piper_motion_stack", default_value="true"),
+        DeclareLaunchArgument("use_aruco_detector", default_value="true"),
+        DeclareLaunchArgument("use_wall_approach_node", default_value="true"),
+        DeclareLaunchArgument("use_search_marker_node", default_value="true"),
+        DeclareLaunchArgument("use_marker_api", default_value="true"),
         DeclareLaunchArgument("use_rviz", default_value="false"),
-        DeclareLaunchArgument("can_port", default_value="can2"),
+        DeclareLaunchArgument("can_port", default_value="can3"),
         DeclareLaunchArgument("auto_enable", default_value="true"),
         DeclareLaunchArgument("follow", default_value="true"),
         DeclareLaunchArgument("auto_control_gate", default_value="false"),
@@ -132,6 +141,7 @@ def generate_launch_description():
             "trajectory_action",
             default_value="/front_piper/arm_controller/follow_joint_trajectory",
         ),
+        DeclareLaunchArgument("enable_service", default_value="/front_piper/enable_agx_arm"),
         DeclareLaunchArgument("joint_state_timeout", default_value="2.5"),
         DeclareLaunchArgument(
             "home_pose_file",
@@ -265,6 +275,7 @@ def generate_launch_description():
                 ("/image", camera_image_topic),
                 ("/camera_info", camera_info_topic),
             ],
+            condition=IfCondition(use_aruco_detector),
         ),
         Node(
             package="piper_x_aruco_wall_approach",
@@ -292,6 +303,7 @@ def generate_launch_description():
                 ("robot_description", robot_description_topic),
                 ("robot_description_semantic", robot_description_semantic_topic),
             ],
+            condition=IfCondition(use_wall_approach_node),
         ),
         Node(
             package="piper_x_aruco_wall_approach",
@@ -312,6 +324,7 @@ def generate_launch_description():
                 ("robot_description", robot_description_topic),
                 ("robot_description_semantic", robot_description_semantic_topic),
             ],
+            condition=IfCondition(use_search_marker_node),
         ),
         Node(
             package="piper_x_aruco_wall_approach",
@@ -345,6 +358,9 @@ def generate_launch_description():
                 joint_state_timeout,
                 "--trajectory-action",
                 trajectory_action,
+                "--enable-service",
+                enable_service,
             ],
+            condition=IfCondition(use_marker_api),
         ),
     ])

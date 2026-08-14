@@ -1,11 +1,13 @@
 # PiPER-X reactive marker-search configuration.
 #
-# Search no longer depends on hardcoded 3x3 joint poses. OpenClaw or the
-# Agent Server requests one bounded search step at a time, and this ROS node
-# enforces the allowed directions and per-step joint deltas through MoveIt.
+# Search no longer depends on hardcoded 3x3 joint poses. A full auto search
+# performs a finite joint-limit sweep: raise joint4 while scanning left/right,
+# reset joint4, sweep joint1 through center/+1.6/+limit/-1.6/-limit, then return
+# joint1 and joint4 to zero if marker 6 is still not found. One-step search
+# still accepts bounded directions through /tools/search-step.
 #
 # Defaults:
-# - PiPER-X arm CAN: can2, configured by launch/driver layer.
+# - Front PiPER-X arm CAN: can3, configured by launch/driver layer.
 # - Marker: ArUco ID 6, size 0.03 m, configured by launch/API layer.
 # - Camera: RealSense D435i wrist camera, observed through /aruco_single/pose.
 search_marker_node:
@@ -17,9 +19,13 @@ search_marker_node:
     settle_time_s: 0.5
     detection_window_frames: 5
     required_detections: 3
+    # Kept for backward-compatible API payloads. Full direction=auto search is
+    # bounded by joint limits and the finite joint1 sector list, not max_steps.
     max_steps: 100
-    velocity_scaling: 0.24
-    acceleration_scaling: 0.20
+    # Search motion should be visibly quicker than final touch/approach motion.
+    # These apply only to the search_marker_node MoveIt group.
+    velocity_scaling: 0.45
+    acceleration_scaling: 0.35
     planning_time: 10.0
     planning_attempts: 10
 
@@ -28,6 +34,8 @@ search_marker_node:
     max_single_joint_step_deg: 15.0
     min_feedback_motion_deg: 1.0
     physical_motion_timeout_s: 2.0
+    joint1_near_sweep_rad: 1.6
+    joint4_reset_rad: 0.0
 
     # Each step should noticeably change the camera view. OpenClaw may decide
     # the next direction, but the robot layer only accepts these bounded
@@ -43,10 +51,8 @@ search_marker_node:
       down_left:  [10.0, 0.0, 0.0, 10.0, 0.0, 0.0]
       down_right: [-10.0, 0.0, 0.0, 10.0, 0.0, 0.0]
 
-    # Used only when a legacy caller invokes search-marker with direction=auto.
-    # OpenClaw-directed search should prefer /tools/search-step. The default
-    # pattern climbs, scans left/right at that new pitch, then climbs again.
-    # It intentionally does not move down or recenter unless explicitly asked.
+    # Kept for old configs/tools. Full direction=auto search now uses the
+    # joint-limit sweep described above instead of this repeated max-step list.
     auto_sequence:
       - up
       - left

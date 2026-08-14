@@ -1,15 +1,16 @@
-# Captured read-only from the live PiPER-X feedback topic.
-# This is a remembered reference pose, not a command by itself.
+# Default home pose for front and rear PiPER-X arms.
+# This is the neutral six-joint zero pose; use nav-pose for Trystan's parked
+# navigation pose.
 pose_name: home
 captured_at_ros_time:
-  sec: 1785930241
-  nanosec: 79302310
-source_topic: /feedback/joint_states
+  sec: 0
+  nanosec: 0
+source_topic: configured_default
 source_type: sensor_msgs/msg/JointState
 arm:
   arm_type: piper_x
-  effector_type: agx_gripper
-  can_port: can2
+  effector_type: none
+  can_port: front_can3_rear_can2
 moveit:
   planning_group: arm
   tip_link: tcp_link
@@ -24,13 +25,13 @@ joint_state:
     - joint6
     - gripper
   positions_rad:
-    - -0.01710422666954443
-    - 0.14215706757493812
-    - -0.9188460380049347
-    - 0.7852759903498088
-    - -0.01668534764906579
-    - -0.02111848394913139
-    - 0.00039999999999999996
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
   velocities:
     - 0.0
     - 0.0
@@ -39,18 +40,3 @@ joint_state:
     - 0.0
     - 0.0
     - 0.0
-tcp_pose_snapshot:
-  source_topic: /feedback/tcp_pose
-  captured_at_ros_time:
-    sec: 1785930241
-    nanosec: 83952188
-  frame_id: ""
-  position_m:
-    x: 0.13797112521861435
-    y: 0.0006054010023371333
-    z: 0.44269314809595856
-  orientation_xyzw:
-    x: -0.48525844552595204
-    y: 0.4746716708368056
-    z: -0.5251201661186505
-    w: 0.5132834081540653

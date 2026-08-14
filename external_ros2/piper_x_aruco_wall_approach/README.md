@@ -210,17 +210,20 @@ ros2 run piper_x_aruco_wall_approach piper_touch_marker_client.py search --execu
 Search parameters live in `config/piper_x_search_poses.yaml`:
 
 - no hardcoded 3x3 joint-pose grid
-- `max_steps: 100`
+- full `direction=auto` search is bounded by joint limits and the finite joint1
+  sector list, not by `max_steps`
 - `settle_time_s: 0.5`
 - `detection_window_frames: 5`
 - `required_detections: 3`
 - allowed directions: `left`, `right`, `up`, `down`, `center`, `current`
 - each direction maps to a small configured six-joint delta and is planned
   through MoveIt
-- prefer `up` as the first reactive search step because marker 6 is usually mounted high; `up` tilts the wrist camera with joint4 first
+- auto search raises joint4 while scanning left/right, then repeats at joint1
+  sectors: current/center, `+1.6`, positive limit, `-1.6`, and negative limit
 
-There is no wall-clock search limit in the ROS search loop. Search stops when
-marker 6 is confirmed or when the step count is exhausted.
+There is no wall-clock or max-step search limit in the full ROS search loop.
+Search stops when marker 6 is confirmed or when the finite joint sweep is
+exhausted.
 
 ## Operator Client
 

@@ -50,34 +50,21 @@ curl -sS -X POST http://127.0.0.1:8893/tools/approach-marker \
   -d '{"execute":true,"lease_id":"<LEASE_ID>","pre_clearance_m":0.05,"final_clearance_m":0.005,"retract_after":false,"retract_distance_m":0.05,"final_velocity_scaling":0.16,"return_home_after":false,"home_duration_s":6.0}'
 ```
 
-If marker `6` is not currently visible, use reactive search instead of the old
-3x3 hardcoded pose grid. Prefer `up` as the first search step because the marker
-is usually mounted high. Search steps are intentionally large enough to reveal a
-new camera area; do not alternate immediately back and forth across the same
-viewpoint. OpenClaw may choose the next direction, but must only call the
-bounded `/tools/search-step` endpoint. Do not publish raw joint, CAN, or MoveIt
+If marker `6` is not currently visible, use the robot-layer full search instead
+of the old 3x3 hardcoded pose grid or a language-model loop of tiny search
+steps. The full search raises joint4 while scanning left/right, then repeats
+that block at joint1 sectors: current/center, `+1.6`, positive joint1 limit,
+`-1.6`, and negative joint1 limit. Do not publish raw joint, CAN, or MoveIt
 commands.
 
 Reactive search loop:
 
 1. Call `GET /health`.
 2. If `marker_visible: true`, call `touch-marker` or `approach-marker`.
-3. If marker is hidden, acquire a lease and call one search step. Start with `up` unless the latest camera evidence clearly suggests another direction.
-4. Re-check health/result after every step.
+3. If marker is hidden, acquire a lease and call `/tools/search-marker` with `direction:"auto"`.
+4. Re-check health/result after the search returns.
 5. Stop immediately when `marker_found: true` or `marker_visible: true`.
-6. Stop after `100` total steps and report `marker_not_found`.
-
-Preferred sweep when there is no camera evidence:
-
-```text
-up -> left -> right -> right -> left
-up -> right -> left -> left -> right
-```
-
-This means: move the camera upward, scan left and right at that higher angle,
-then move upward again and scan left and right again. Do not move down or
-recenter during search unless the camera evidence specifically supports that
-choice.
+6. If the full sweep finishes without a marker, report `marker_not_found`.
 
 Search one step:
 

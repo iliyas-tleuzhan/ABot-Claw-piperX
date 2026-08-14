@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 class MarkerTaskRequest(BaseModel):
     execute: bool = False
     lease_id: Optional[str] = None
+    arm: str = Field(default="front")
     pre_clearance_m: float = Field(default=0.05)
     final_clearance_m: float = Field(default=0.005)
     retract_after: bool = False
@@ -24,6 +25,7 @@ class MarkerTaskRequest(BaseModel):
 class SearchMarkerRequest(BaseModel):
     execute: bool = False
     lease_id: Optional[str] = None
+    arm: str = Field(default="front")
     direction: str = Field(default="auto")
     max_steps: int = Field(default=100)
 
@@ -31,6 +33,7 @@ class SearchMarkerRequest(BaseModel):
 class HomeRequest(BaseModel):
     execute: bool = False
     lease_id: Optional[str] = None
+    arm: str = Field(default="front")
     duration_s: float = Field(default=6.0)
 
 
@@ -225,6 +228,15 @@ def create_router(cfg, sdk, lease_mgr, state_monitor) -> APIRouter:
     def go_found_marker(req: HomeRequest):
         require_execution_allowed(req.execute, req.lease_id)
         status_code, result = sdk.go_found_marker(req.model_dump(exclude={"lease_id"}))
+        normalized = _normalize_marker_api_response(status_code, result)
+        if not normalized.get("success", False):
+            raise HTTPException(status_code=422 if status_code < 400 else status_code, detail=normalized)
+        return normalized
+
+    @router.post("/go-nav-pose")
+    def go_nav_pose(req: HomeRequest):
+        require_execution_allowed(req.execute, req.lease_id)
+        status_code, result = sdk.go_nav_pose(req.model_dump(exclude={"lease_id"}))
         normalized = _normalize_marker_api_response(status_code, result)
         if not normalized.get("success", False):
             raise HTTPException(status_code=422 if status_code < 400 else status_code, detail=normalized)

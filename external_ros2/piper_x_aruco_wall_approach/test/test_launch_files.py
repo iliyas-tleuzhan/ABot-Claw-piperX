@@ -53,6 +53,10 @@ def test_touch_marker_full_stack_launch_loads():
     assert "SetEnvironmentVariable" in entity_types
     assert launch_defaults["piper_namespace"] == "front_piper"
     assert launch_defaults["use_piper_motion_stack"] == "true"
+    assert launch_defaults["use_aruco_detector"] == "true"
+    assert launch_defaults["use_wall_approach_node"] == "true"
+    assert launch_defaults["use_search_marker_node"] == "true"
+    assert launch_defaults["use_marker_api"] == "true"
     assert launch_defaults["use_realsense"] == "false"
     assert launch_defaults["use_handeye_tf_publisher"] == "false"
     assert launch_defaults["use_front_piper_joint_state_adapter"] == "true"
@@ -73,6 +77,7 @@ def test_touch_marker_full_stack_launch_loads():
         launch_defaults["trajectory_action"]
         == "/front_piper/arm_controller/follow_joint_trajectory"
     )
+    assert launch_defaults["enable_service"] == "/front_piper/enable_agx_arm"
     assert "wall_approach_node" in node_executables
     assert "search_marker_node" in node_executables
     assert "front_piper_joint_state_adapter.py" in node_executables

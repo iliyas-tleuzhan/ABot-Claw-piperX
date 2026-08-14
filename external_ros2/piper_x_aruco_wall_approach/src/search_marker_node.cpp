@@ -103,14 +103,16 @@ public:
     detection_window_frames_ = declare_parameter<int>("detection_window_frames", 5);
     required_detections_ = declare_parameter<int>("required_detections", 3);
     max_steps_ = declare_parameter<int>("max_steps", 100);
-    velocity_scaling_ = declare_parameter<double>("velocity_scaling", 0.10);
-    acceleration_scaling_ = declare_parameter<double>("acceleration_scaling", 0.10);
+    velocity_scaling_ = declare_parameter<double>("velocity_scaling", 0.45);
+    acceleration_scaling_ = declare_parameter<double>("acceleration_scaling", 0.35);
     planning_time_ = declare_parameter<double>("planning_time", 10.0);
     planning_attempts_ = declare_parameter<int>("planning_attempts", 10);
     max_single_joint_step_deg_ = declare_parameter<double>("max_single_joint_step_deg", 8.0);
     min_feedback_motion_deg_ = declare_parameter<double>("min_feedback_motion_deg", 1.0);
     physical_motion_timeout_s_ = declare_parameter<double>("physical_motion_timeout_s", 2.0);
     center_step_scale_ = declare_parameter<double>("center_step_scale", 1.0);
+    joint1_near_sweep_rad_ = declare_parameter<double>("joint1_near_sweep_rad", 1.6);
+    joint4_reset_rad_ = declare_parameter<double>("joint4_reset_rad", 0.0);
     auto_sequence_ = declare_parameter<std::vector<std::string>>(
       "auto_sequence",
       std::vector<std::string>{
@@ -156,8 +158,8 @@ public:
 
     RCLCPP_INFO(
       get_logger(),
-      "Reactive search service ready: marker_id=%d, max_steps=%d, settle_time_s=%.2f, detection=%d/%d",
-      marker_id_, max_steps_, settle_time_s_, required_detections_, detection_window_frames_);
+      "Reactive search service ready: marker_id=%d, settle_time_s=%.2f, detection=%d/%d",
+      marker_id_, settle_time_s_, required_detections_, detection_window_frames_);
   }
 
   void initialise_moveit(const rclcpp::Node::SharedPtr & node)
@@ -468,21 +470,49 @@ private:
     for (std::size_t i = 0; i < kJointCount; ++i) {
       target[i] += delta[i];
     }
+    const bool ok = execute_joint_target(target, execute, direction, *current, joint_names, stage, message);
+    if (ok && stage == "search_motion_complete") {
+      for (std::size_t i = 0; i < kJointCount; ++i) {
+        cumulative_offset_[i] += delta[i];
+      }
+      message = "completed reactive search direction '" + direction + "'";
+    }
+    return ok;
+  }
 
+  bool execute_joint_target(
+    const std::vector<double> & target,
+    const bool execute,
+    const std::string & label,
+    const std::vector<double> & current,
+    const std::vector<std::string> & joint_names,
+    std::string & stage,
+    std::string & message)
+  {
+    if (!valid_delta(target)) {
+      stage = "search_step_config";
+      message = "invalid search target for '" + label + "'";
+      return false;
+    }
+    if (!move_group_) {
+      stage = "moveit_unavailable";
+      message = "MoveIt interface is not ready";
+      return false;
+    }
     move_group_->setStartStateToCurrentState();
     move_group_->setJointValueTarget(target);
     moveit::planning_interface::MoveGroupInterface::Plan plan;
     const auto plan_result = move_group_->plan(plan);
     if (plan_result != moveit::core::MoveItErrorCode::SUCCESS) {
       stage = "search_plan";
-      message = "MoveIt planning failed for reactive search direction '" + direction + "'";
+      message = "MoveIt planning failed for reactive search target '" + label + "'";
       return false;
     }
     const auto planned_final = planned_final_joint_values(plan, joint_names);
-    if (planned_final && max_abs_difference(*current, *planned_final) < min_feedback_motion_rad_) {
+    if (planned_final && max_abs_difference(current, *planned_final) < min_feedback_motion_rad_) {
       stage = "search_motion_skipped";
       message =
-        "reactive search direction '" + direction +
+        "reactive search target '" + label +
         "' was skipped because the planned physical motion is below " +
         std::to_string(min_feedback_motion_deg_) +
         " deg, likely because the joint is at or near its limit";
@@ -490,25 +520,61 @@ private:
     }
     if (!execute) {
       stage = "plan_only";
-      message = "reactive search direction '" + direction + "' planned; execute=false so no motion was commanded";
+      message = "reactive search target '" + label + "' planned; execute=false so no motion was commanded";
       return true;
     }
     const auto execute_result = move_group_->execute(plan);
     if (execute_result != moveit::core::MoveItErrorCode::SUCCESS) {
       stage = "search_execution";
-      message = "MoveIt execution failed for reactive search direction '" + direction + "'";
+      message = "MoveIt execution failed for reactive search target '" + label + "'";
       return false;
     }
-    if (!wait_for_physical_feedback_motion(*current, message)) {
+    if (!wait_for_physical_feedback_motion(current, message)) {
       stage = "physical_motion";
       return false;
     }
-    for (std::size_t i = 0; i < kJointCount; ++i) {
-      cumulative_offset_[i] += delta[i];
-    }
     stage = "search_motion_complete";
-    message = "completed reactive search direction '" + direction + "'";
+    message = "completed reactive search target '" + label + "'";
     return true;
+  }
+
+  bool execute_absolute_step(
+    const std::vector<double> & target,
+    const bool execute,
+    const std::string & label,
+    int & steps_used,
+    std::string & found_at_pose,
+    std::string & stage,
+    std::string & message)
+  {
+    if (!move_group_) {
+      stage = "moveit_unavailable";
+      message = "MoveIt interface is not ready";
+      return false;
+    }
+    std::string joint_message;
+    auto current = current_joint_values(joint_message);
+    if (!current) {
+      stage = "moveit_state";
+      message = joint_message;
+      return false;
+    }
+    const auto joint_names = move_group_->getJointNames();
+    if (!execute_joint_target(target, execute, label, *current, joint_names, stage, message)) {
+      return false;
+    }
+    steps_used++;
+    rclcpp::sleep_for(std::chrono::duration_cast<std::chrono::nanoseconds>(
+      std::chrono::duration<double>(settle_time_s_)));
+
+    std::string confirmation_message;
+    if (marker_fresh() && confirm_marker(confirmation_message)) {
+      found_at_pose = "reactive_" + label;
+      stage = "complete";
+      message = "marker acquired after reactive search target '" + label + "'";
+      return true;
+    }
+    return false;
   }
 
   std::vector<double> center_delta(std::string & message) const
@@ -569,6 +635,286 @@ private:
     return false;
   }
 
+  std::optional<std::pair<double, double>> joint_bounds(
+    const std::size_t joint_index,
+    std::string & message) const
+  {
+    if (!move_group_) {
+      message = "MoveIt interface is not ready";
+      return std::nullopt;
+    }
+    const auto joint_names = move_group_->getJointNames();
+    if (joint_index >= joint_names.size()) {
+      message = "joint index " + std::to_string(joint_index) + " is outside MoveIt joint list";
+      return std::nullopt;
+    }
+    const auto robot_model = move_group_->getRobotModel();
+    if (!robot_model) {
+      message = "MoveIt robot model is not available";
+      return std::nullopt;
+    }
+    const auto & bounds = robot_model->getVariableBounds(joint_names[joint_index]);
+    if (!bounds.position_bounded_) {
+      message = "MoveIt joint " + joint_names[joint_index] + " has no bounded position limits";
+      return std::nullopt;
+    }
+    return std::make_pair(bounds.min_position_, bounds.max_position_);
+  }
+
+  bool maybe_check_marker_after_no_motion(
+    const std::string & label,
+    std::string & found_at_pose,
+    std::string & stage,
+    std::string & message)
+  {
+    std::string confirmation_message;
+    if (marker_fresh() && confirm_marker(confirmation_message)) {
+      found_at_pose = "reactive_" + label;
+      stage = "complete";
+      message = "marker acquired at reactive search target '" + label + "'";
+      return true;
+    }
+    return false;
+  }
+
+  bool move_target_and_allow_skips(
+    const std::vector<double> & target,
+    const std::string & label,
+    int & steps_used,
+    std::string & found_at_pose,
+    std::string & stage,
+    std::string & message,
+    bool & motion_ok)
+  {
+    motion_ok = true;
+    const bool found = execute_absolute_step(
+      target, true, label, steps_used, found_at_pose, stage, message);
+    if (found) {
+      return true;
+    }
+    if (stage == "search_motion_complete" || stage == "search_motion_skipped") {
+      return maybe_check_marker_after_no_motion(label, found_at_pose, stage, message);
+    }
+    motion_ok = false;
+    return false;
+  }
+
+  bool run_joint_limit_sweep(
+    int & steps_used,
+    std::string & found_at_pose,
+    std::string & stage,
+    std::string & message)
+  {
+    std::string joint_message;
+    auto current = current_joint_values(joint_message);
+    if (!current) {
+      stage = "moveit_state";
+      message = joint_message;
+      return false;
+    }
+
+    const auto joint1_bounds = joint_bounds(0, message);
+    if (!joint1_bounds) {
+      stage = "moveit_bounds";
+      return false;
+    }
+    const auto joint4_bounds = joint_bounds(3, message);
+    if (!joint4_bounds) {
+      stage = "moveit_bounds";
+      return false;
+    }
+
+    const auto up_iter = direction_deltas_.find("up");
+    const auto left_iter = direction_deltas_.find("left");
+    const auto right_iter = direction_deltas_.find("right");
+    if (up_iter == direction_deltas_.end() || left_iter == direction_deltas_.end() ||
+      right_iter == direction_deltas_.end())
+    {
+      stage = "search_direction";
+      message = "full search requires configured up, left, and right deltas";
+      return false;
+    }
+
+    const double up_step = up_iter->second[3];
+    if (!std::isfinite(up_step) || std::abs(up_step) < 1e-6) {
+      stage = "search_step_config";
+      message = "full search requires a non-zero joint4 up delta";
+      return false;
+    }
+    const double up_limit = up_step > 0.0 ? joint4_bounds->second : joint4_bounds->first;
+    const double near_positive = std::clamp(joint1_near_sweep_rad_, joint1_bounds->first, joint1_bounds->second);
+    const double near_negative = std::clamp(-joint1_near_sweep_rad_, joint1_bounds->first, joint1_bounds->second);
+    const double look_left_offset = left_iter->second[0];
+    const double look_right_offset = right_iter->second[0];
+    const double limit_margin = std::max(0.5 * M_PI / 180.0, min_feedback_motion_rad_);
+
+    std::vector<double> sectors;
+    sectors.push_back(std::clamp((*current)[0], joint1_bounds->first, joint1_bounds->second));
+    sectors.push_back(near_positive);
+    sectors.push_back(joint1_bounds->second);
+    sectors.push_back(near_negative);
+    sectors.push_back(joint1_bounds->first);
+
+    auto append_unique_sector = [](std::vector<double> & values, const double value) {
+      constexpr double kDuplicateTolerance = 0.02;
+      if (std::none_of(values.begin(), values.end(), [value](const double existing) {
+          return std::abs(existing - value) < kDuplicateTolerance;
+        }))
+      {
+        values.push_back(value);
+      }
+    };
+    std::vector<double> unique_sectors;
+    for (const auto sector : sectors) {
+      append_unique_sector(unique_sectors, sector);
+    }
+
+    for (std::size_t sector_index = 0; sector_index < unique_sectors.size(); ++sector_index) {
+      const double sector_joint1 = unique_sectors[sector_index];
+      current = current_joint_values(joint_message);
+      if (!current) {
+        stage = "moveit_state";
+        message = joint_message;
+        return false;
+      }
+
+      std::vector<double> target = *current;
+      target[3] = std::clamp(joint4_reset_rad_, joint4_bounds->first, joint4_bounds->second);
+      if (sector_index > 0) {
+        bool motion_ok = true;
+        if (move_target_and_allow_skips(
+            target, "j4_reset_before_sector_" + std::to_string(sector_index),
+            steps_used, found_at_pose, stage, message, motion_ok))
+        {
+          return true;
+        }
+        if (!motion_ok) {
+          return false;
+        }
+      }
+
+      current = current_joint_values(joint_message);
+      if (!current) {
+        stage = "moveit_state";
+        message = joint_message;
+        return false;
+      }
+      target = *current;
+      target[0] = sector_joint1;
+      target[3] = std::clamp(joint4_reset_rad_, joint4_bounds->first, joint4_bounds->second);
+      bool motion_ok = true;
+      if (move_target_and_allow_skips(
+          target, "j1_sector_" + std::to_string(sector_index),
+          steps_used, found_at_pose, stage, message, motion_ok))
+      {
+        return true;
+      }
+      if (!motion_ok) {
+        return false;
+      }
+
+      while (rclcpp::ok()) {
+        current = current_joint_values(joint_message);
+        if (!current) {
+          stage = "moveit_state";
+          message = joint_message;
+          return false;
+        }
+        const double remaining = up_limit - (*current)[3];
+        if (std::abs(remaining) <= limit_margin || remaining * up_step <= 0.0) {
+          break;
+        }
+
+        target = *current;
+        target[0] = sector_joint1;
+        if (std::abs(remaining) <= std::abs(up_step)) {
+          target[3] = up_limit;
+        } else {
+          target[3] = (*current)[3] + up_step;
+        }
+        target[3] = std::clamp(target[3], joint4_bounds->first, joint4_bounds->second);
+        if (move_target_and_allow_skips(
+            target, "sector_" + std::to_string(sector_index) + "_j4_up",
+            steps_used, found_at_pose, stage, message, motion_ok))
+        {
+          return true;
+        }
+        if (!motion_ok) {
+          return false;
+        }
+
+        for (const auto & look : {
+            std::make_pair(std::string("left"), look_left_offset),
+            std::make_pair(std::string("right"), look_right_offset),
+            std::make_pair(std::string("right_far"), 2.0 * look_right_offset),
+            std::make_pair(std::string("left_far"), 2.0 * look_left_offset)})
+        {
+          current = current_joint_values(joint_message);
+          if (!current) {
+            stage = "moveit_state";
+            message = joint_message;
+            return false;
+          }
+          target = *current;
+          target[0] = std::clamp(sector_joint1 + look.second, joint1_bounds->first, joint1_bounds->second);
+          if (move_target_and_allow_skips(
+              target,
+              "sector_" + std::to_string(sector_index) + "_look_" + look.first,
+              steps_used, found_at_pose, stage, message, motion_ok))
+          {
+            return true;
+          }
+          if (!motion_ok) {
+            return false;
+          }
+        }
+
+        current = current_joint_values(joint_message);
+        if (!current) {
+          stage = "moveit_state";
+          message = joint_message;
+          return false;
+        }
+        target = *current;
+        target[0] = sector_joint1;
+        if (move_target_and_allow_skips(
+            target, "sector_" + std::to_string(sector_index) + "_recenter_j1",
+            steps_used, found_at_pose, stage, message, motion_ok))
+        {
+          return true;
+        }
+        if (!motion_ok) {
+          return false;
+        }
+      }
+    }
+
+    current = current_joint_values(joint_message);
+    if (!current) {
+      stage = "moveit_state";
+      message = joint_message;
+      return false;
+    }
+    std::vector<double> target = *current;
+    target[0] = std::clamp(0.0, joint1_bounds->first, joint1_bounds->second);
+    target[3] = std::clamp(joint4_reset_rad_, joint4_bounds->first, joint4_bounds->second);
+    bool motion_ok = true;
+    if (move_target_and_allow_skips(
+        target, "search_failed_return_j1_j4_zero",
+        steps_used, found_at_pose, stage, message, motion_ok))
+    {
+      return true;
+    }
+    if (!motion_ok) {
+      return false;
+    }
+
+    stage = "search_complete";
+    message =
+      "marker_not_found after full joint-limit sweep; returned joint1 and joint4 to zero";
+    return false;
+  }
+
   void handle_search(
     const std::shared_ptr<piper_x_aruco_wall_approach::srv::SearchMarker::Request> request,
     std::shared_ptr<piper_x_aruco_wall_approach::srv::SearchMarker::Response> response)
@@ -596,8 +942,6 @@ private:
     }
 
     const auto direction = normalise_direction(request->direction);
-    const int requested_max_steps = request->max_steps > 0 ? request->max_steps : max_steps_;
-    const int step_limit = std::clamp(requested_max_steps, 1, max_steps_);
 
     if (!request->execute) {
       response->stage = "marker_not_found";
@@ -629,28 +973,14 @@ private:
       return;
     }
 
-    for (int step = 0; step < step_limit; ++step) {
-      const auto & next_direction = auto_sequence_.empty() ? std::string("left") : auto_sequence_[step % auto_sequence_.size()];
-      const bool found = perform_step(
-        next_direction, true, steps_used, found_at_pose, response->stage, response->message);
-      response->poses_checked = steps_used;
-      if (found) {
-        response->success = true;
-        response->marker_found = true;
-        response->found_at_pose = found_at_pose;
-        return;
-      }
-      if (
-        response->stage != "search_motion_complete" &&
-        response->stage != "search_motion_skipped")
-      {
-        return;
-      }
-    }
-
-    response->stage = "search_complete";
-    response->message = "marker_not_found after " + std::to_string(steps_used) + " reactive search steps";
+    const bool found = run_joint_limit_sweep(
+      steps_used, found_at_pose, response->stage, response->message);
     response->poses_checked = steps_used;
+    if (found) {
+      response->success = true;
+      response->marker_found = true;
+      response->found_at_pose = found_at_pose;
+    }
   }
 
   std::string aruco_pose_topic_;
@@ -674,6 +1004,8 @@ private:
   double min_feedback_motion_rad_{};
   double physical_motion_timeout_s_{};
   double center_step_scale_{};
+  double joint1_near_sweep_rad_{};
+  double joint4_reset_rad_{};
   std::vector<std::string> auto_sequence_;
   std::unordered_map<std::string, std::vector<double>> direction_deltas_;
   std::vector<double> cumulative_offset_ = std::vector<double>(kJointCount, 0.0);

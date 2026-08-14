@@ -62,6 +62,7 @@ def marker_payload(args: argparse.Namespace) -> Dict[str, Any]:
     return {
         "execute": args.execute,
         "lease_id": args.lease_id,
+        "arm": args.arm,
         "pre_clearance_m": args.pre_clearance,
         "final_clearance_m": args.final_clearance,
         "retract_after": args.retract,
@@ -82,6 +83,7 @@ def command_needs_lease(args: argparse.Namespace) -> bool:
         "found-marker",
         "open-gripper",
         "close-gripper",
+        "nav-pose",
     }
 
 
@@ -102,6 +104,7 @@ def main() -> int:
         task.add_argument("--execute", action="store_true")
         task.add_argument("--plan-only", action="store_true")
         task.add_argument("--lease-id")
+        task.add_argument("--arm", choices=["front", "rear"], default="front")
         task.add_argument("--pre-clearance", type=float, default=0.05)
         task.add_argument("--final-clearance", type=float, default=0.005)
         task.add_argument("--retract", action="store_true")
@@ -114,22 +117,32 @@ def main() -> int:
     search.add_argument("--execute", action="store_true")
     search.add_argument("--plan-only", action="store_true")
     search.add_argument("--lease-id")
+    search.add_argument("--arm", choices=["front", "rear"], default="front")
 
     home = subparsers.add_parser("home")
     home.add_argument("--execute", action="store_true")
     home.add_argument("--plan-only", action="store_true")
     home.add_argument("--lease-id")
+    home.add_argument("--arm", choices=["front", "rear"], default="front")
     home.add_argument("--duration", type=float, default=6.0)
     previous = subparsers.add_parser("previous")
     previous.add_argument("--execute", action="store_true")
     previous.add_argument("--plan-only", action="store_true")
     previous.add_argument("--lease-id")
+    previous.add_argument("--arm", choices=["front", "rear"], default="front")
     previous.add_argument("--duration", type=float, default=6.0)
     found_marker = subparsers.add_parser("found-marker")
     found_marker.add_argument("--execute", action="store_true")
     found_marker.add_argument("--plan-only", action="store_true")
     found_marker.add_argument("--lease-id")
+    found_marker.add_argument("--arm", choices=["front", "rear"], default="front")
     found_marker.add_argument("--duration", type=float, default=6.0)
+    nav_pose = subparsers.add_parser("nav-pose")
+    nav_pose.add_argument("--execute", action="store_true")
+    nav_pose.add_argument("--plan-only", action="store_true")
+    nav_pose.add_argument("--lease-id")
+    nav_pose.add_argument("--arm", choices=["front", "rear"], default="front")
+    nav_pose.add_argument("--duration", type=float, default=6.0)
     save_home = subparsers.add_parser("save-home")
     save_home.add_argument("--pose-name", default="home")
     subparsers.add_parser("save-previous")
@@ -173,7 +186,7 @@ def main() -> int:
                 *request_json(
                     "POST",
                     f"{base_url}/tools/go-home",
-                    {"execute": args.execute, "lease_id": args.lease_id, "duration_s": args.duration},
+                    {"execute": args.execute, "lease_id": args.lease_id, "arm": args.arm, "duration_s": args.duration},
                 )
             )
         if args.command == "previous":
@@ -181,7 +194,7 @@ def main() -> int:
                 *request_json(
                     "POST",
                     f"{base_url}/tools/go-previous",
-                    {"execute": args.execute, "lease_id": args.lease_id, "duration_s": args.duration},
+                    {"execute": args.execute, "lease_id": args.lease_id, "arm": args.arm, "duration_s": args.duration},
                 )
             )
         if args.command == "found-marker":
@@ -189,7 +202,15 @@ def main() -> int:
                 *request_json(
                     "POST",
                     f"{base_url}/tools/go-found-marker",
-                    {"execute": args.execute, "lease_id": args.lease_id, "duration_s": args.duration},
+                    {"execute": args.execute, "lease_id": args.lease_id, "arm": args.arm, "duration_s": args.duration},
+                )
+            )
+        if args.command == "nav-pose":
+            return print_result(
+                *request_json(
+                    "POST",
+                    f"{base_url}/tools/go-nav-pose",
+                    {"execute": args.execute, "lease_id": args.lease_id, "arm": args.arm, "duration_s": args.duration},
                 )
             )
         if args.command == "save-home":
@@ -211,7 +232,7 @@ def main() -> int:
                 *request_json(
                     "POST",
                     f"{base_url}/tools/search-marker",
-                    {"execute": args.execute, "lease_id": args.lease_id},
+                    {"execute": args.execute, "lease_id": args.lease_id, "arm": args.arm},
                 )
             )
         endpoint = "approach-marker" if args.command == "approach" else "touch-marker"
