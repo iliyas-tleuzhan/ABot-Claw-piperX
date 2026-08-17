@@ -50,6 +50,12 @@ def test_touch_marker_full_stack_launch_loads():
         for entity in description.entities
         if type(entity).__name__ == "DeclareLaunchArgument"
     }
+    include_launch_arguments = []
+    for entity in description.entities:
+        if type(entity).__name__ == "IncludeLaunchDescription":
+            include_launch_arguments.extend(
+                getattr(entity, "_IncludeLaunchDescription__launch_arguments", [])
+            )
     assert "SetEnvironmentVariable" in entity_types
     assert launch_defaults["piper_namespace"] == "front_piper"
     assert launch_defaults["use_piper_motion_stack"] == "true"
@@ -66,6 +72,10 @@ def test_touch_marker_full_stack_launch_loads():
     assert launch_defaults["camera_info_topic"] == "/front_camera/color/camera_info"
     assert launch_defaults["point_cloud_topic"] == "/front_camera/depth/color/points"
     assert launch_defaults["camera_optical_frame"] == "front_camera_color_optical_frame"
+    assert ("camera_name", "front_camera") in [
+        (substitution_text(key), substitution_text(value))
+        for key, value in include_launch_arguments
+    ]
     assert launch_defaults["joint_state_topic"] == "/front_piper/feedback/joint_states"
     assert launch_defaults["control_topic"] == "/front_piper/control/joint_states"
     assert launch_defaults["robot_description_topic"] == "/front_piper/robot_description"

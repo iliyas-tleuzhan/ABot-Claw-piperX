@@ -42,8 +42,8 @@ The calibrated TF chain must be:
 base_link
   -> PiPER-X links
   -> flange_link
-  -> camera_link
-  -> camera_color_optical_frame
+  -> front_camera_link
+  -> front_camera_color_optical_frame
 ```
 
 ## Build
@@ -356,7 +356,7 @@ curl -s http://127.0.0.1:8892/health | python3 -m json.tool
 ros2 service list | grep marker
 ros2 topic echo /aruco_single/pose --once
 ros2 topic hz /front_camera/depth/color/points
-ros2 run tf2_ros tf2_echo base_link camera_color_optical_frame
+ros2 run tf2_ros tf2_echo base_link front_camera_color_optical_frame
 ros2 topic list | grep points
 ```
 
@@ -384,7 +384,7 @@ ros2 topic list | grep points
 If the service reports a transform error, verify the calibrated chain:
 
 ```bash
-ros2 run tf2_ros tf2_echo base_link camera_color_optical_frame
+ros2 run tf2_ros tf2_echo base_link front_camera_color_optical_frame
 ```
 
 If the API rejects `execute=true`, enable execution deliberately:

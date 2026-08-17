@@ -12,7 +12,7 @@ It deliberately does **not** use the older ROS 1 `piper_ros` package or `ros2 la
 4. Start RealSense, ArUco, and the TCP pose bridge.
 5. Collect 15--20 materially different stationary arm poses, then save the result.
 6. Copy the result to `~/handeye/config/piper_x_d435i_eye_in_hand.json`.
-7. Start the normal runtime, publish the resulting `flange_link -> camera_link` TF, and verify the complete TF chain in RViz.
+7. Start the normal runtime, publish the resulting `flange_link -> front_camera_link` TF, and verify the complete TF chain in RViz.
 
 > Warning: the calibration result is valid only for this PiPER-X, gripper/TCP definition, D435i serial number, and unchanged mechanical camera mount. It is not a universal PiPER-X transform.
 
@@ -43,23 +43,23 @@ PiPER-X CAN / agx_arm_ctrl
 
 RealSense D435i
   -> color image + camera_info
-  -> camera_link -> ... -> camera_color_optical_frame
+  -> front_camera_link -> ... -> front_camera_color_optical_frame
 
 Hand-eye result + RealSense internal TF
-  -> static flange_link -> camera_link
+  -> static flange_link -> front_camera_link
   -> complete chain below
 
 base_link
   └── PiPER-X links
        └── flange_link
-            └── camera_link
+            └── front_camera_link
                  └── RealSense internal frames
-                      └── camera_color_optical_frame
+                      └── front_camera_color_optical_frame
 ```
 
 The hand-eye package consumes a `geometry_msgs/msg/Pose`, while the current PiPER-X driver publishes `/feedback/tcp_pose` as `geometry_msgs/msg/PoseStamped`. The documented bridge removes only the header; it does not change position or orientation.
 
-The calibrated transform is published to `camera_link`, not directly to `camera_color_optical_frame`. RealSense already owns its internal camera TF tree; publishing a second parent directly to the optical frame would create competing TF authority.
+The calibrated transform is published to `front_camera_link`, not directly to `front_camera_color_optical_frame`. RealSense already owns its internal camera TF tree; publishing a second parent directly to the optical frame would create competing TF authority.
 
 ## 2. Official Repositories and Packages
 
@@ -274,6 +274,7 @@ Colour is required for calibration; depth may be disabled.
 source /opt/ros/jazzy/setup.bash
 
 ros2 launch realsense2_camera rs_launch.py \
+  camera_name:=front_camera \
   enable_color:=true \
   enable_depth:=false \
   rgb_camera.color_profile:=640x480x30
@@ -293,7 +294,7 @@ ros2 topic list | grep color
 ros2 topic echo /front_camera/color/camera_info --once
 ```
 
-The usual optical frame is `camera_color_optical_frame`.
+The usual optical frame is `front_camera_color_optical_frame`.
 
 ### Terminal 3: ArUco detector
 
@@ -309,8 +310,8 @@ ros2 run aruco_ros single --ros-args \
   -p marker_id:=582 \
   -p marker_size:=0.0677 \
   -p image_is_rectified:=true \
-  -p reference_frame:=camera_color_optical_frame \
-  -p camera_frame:=camera_color_optical_frame \
+  -p reference_frame:=front_camera_color_optical_frame \
+  -p camera_frame:=front_camera_color_optical_frame \
   -p marker_frame:=aruco_marker_frame \
   -p corner_refinement:=LINES \
   -r /image:=/front_camera/color/image_raw \
@@ -584,8 +585,8 @@ def main():
     )
     parser.add_argument('--calibration', required=True)
     parser.add_argument('--parent-frame', default='flange_link')
-    parser.add_argument('--camera-root', default='camera_link')
-    parser.add_argument('--optical-frame', default='camera_color_optical_frame')
+    parser.add_argument('--camera-root', default='front_camera_link')
+    parser.add_argument('--optical-frame', default='front_camera_color_optical_frame')
     args = parser.parse_args()
 
     calibration_file = Path(args.calibration).expanduser()
@@ -658,6 +659,7 @@ This starts RViz, RobotModel, `robot_state_publisher`, and the joint-state GUI. 
 source /opt/ros/jazzy/setup.bash
 
 ros2 launch realsense2_camera rs_launch.py \
+  camera_name:=front_camera \
   enable_color:=true \
   enable_depth:=true \
   align_depth.enable:=true \
@@ -674,16 +676,16 @@ source ~/ros2_ws/install/setup.bash
 python3 ~/handeye/publish_handeye_tf.py \
   --calibration ~/handeye/config/piper_x_d435i_eye_in_hand.json \
   --parent-frame flange_link \
-  --camera-root camera_link \
-  --optical-frame camera_color_optical_frame
+  --camera-root front_camera_link \
+  --optical-frame front_camera_color_optical_frame
 ```
 
 Expected output:
 
 ```text
 Loaded calibration: ...
-Will publish flange_link -> camera_link
-Published calibrated TF: flange_link -> camera_link
+Will publish flange_link -> front_camera_link
+Published calibrated TF: flange_link -> front_camera_link
 Keep this node running during robot operation.
 ```
 
@@ -697,7 +699,7 @@ source ~/agx_arm_ws/install/setup.bash
 
 ros2 run tf2_ros tf2_echo \
   base_link \
-  camera_color_optical_frame
+  front_camera_color_optical_frame
 ```
 
 The direct calibrated transform stays static:
@@ -705,7 +707,7 @@ The direct calibrated transform stays static:
 ```bash
 ros2 run tf2_ros tf2_echo \
   flange_link \
-  camera_link
+  front_camera_link
 ```
 
 In RViz set:
@@ -748,7 +750,7 @@ Do not install the older driver for this workflow. Use `agx_arm_ctrl` with `arm_
 
 ### Calibration waits at `wait marker data...`
 
-Confirm the stationary marker is visible, the ID and black-square side length are correct, `/aruco_single/pose` exists, remappings are correct, and `camera_color_optical_frame` is the actual optical frame.
+Confirm the stationary marker is visible, the ID and black-square side length are correct, `/aruco_single/pose` exists, remappings are correct, and `front_camera_color_optical_frame` is the actual optical frame.
 
 ### `Invalid firmware version:`
 
@@ -772,8 +774,8 @@ Start RealSense first, then check:
 
 ```bash
 ros2 run tf2_ros tf2_echo \
-  camera_link \
-  camera_color_optical_frame
+  front_camera_link \
+  front_camera_color_optical_frame
 ```
 
 ### Point cloud detached from wrist
@@ -783,10 +785,10 @@ Check the whole chain:
 ```bash
 ros2 run tf2_ros tf2_echo \
   base_link \
-  camera_color_optical_frame
+  front_camera_color_optical_frame
 ```
 
-Confirm the publisher parameters are `flange_link`, `camera_link`, and `camera_color_optical_frame` respectively.
+Confirm the publisher parameters are `flange_link`, `front_camera_link`, and `front_camera_color_optical_frame` respectively.
 
 ## 13. Known Working Configuration
 
@@ -802,7 +804,7 @@ Driver TCP topic:    /feedback/tcp_pose (PoseStamped)
 Calibration TCP:     /end_pose (Pose, via bridge)
 Marker pose:         /aruco_single/pose (PoseStamped)
 Calibration output:  ~/handeye/config/piper_x_d435i_eye_in_hand.json
-Calibrated TF:       flange_link -> camera_link
+Calibrated TF:       flange_link -> front_camera_link
 RViz fixed frame:    base_link
 ```
 

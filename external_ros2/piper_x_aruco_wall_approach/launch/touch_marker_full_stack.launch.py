@@ -202,6 +202,7 @@ def generate_launch_description():
                 ])
             ]),
             launch_arguments={
+                "camera_name": "front_camera",
                 "enable_color": enable_color,
                 "enable_depth": enable_depth,
                 "rgb_camera.color_profile": color_profile,

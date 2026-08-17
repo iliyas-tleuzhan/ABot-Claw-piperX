@@ -103,8 +103,8 @@ def main():
     parser = argparse.ArgumentParser(description="Publish PiPER-X hand-eye calibration as ROS TF.")
     parser.add_argument("--calibration", required=True)
     parser.add_argument("--parent-frame", default="flange_link")
-    parser.add_argument("--camera-root", default="camera_link")
-    parser.add_argument("--optical-frame", default="camera_color_optical_frame")
+    parser.add_argument("--camera-root", default="front_camera_link")
+    parser.add_argument("--optical-frame", default="front_camera_color_optical_frame")
     args, _ros_args = parser.parse_known_args()
 
     calibration_file = Path(args.calibration).expanduser()
