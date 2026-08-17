@@ -19,7 +19,7 @@ def generate_launch_description():
         DeclareLaunchArgument('goal_orientation_tolerance', default_value='0.35'),
         DeclareLaunchArgument(
             'point_cloud_topic',
-            default_value='/camera/camera/depth/color/points',
+            default_value='/front_camera/depth/color/points',
         ),
         DeclareLaunchArgument('tool_roll', default_value='0.0'),
         Node(

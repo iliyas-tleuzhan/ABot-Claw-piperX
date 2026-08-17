@@ -4,8 +4,8 @@ This file is for the Orin setup:
 
 - Orin SSH: `dase-orin@192.168.1.148`
 - Docker container: `iliyas-abot`
-- front PiPER-X arm CAN: `can3`
-- rear PiPER-X arm CAN: `can2`
+- front PiPER-X arm CAN: `can2`
+- rear PiPER-X arm CAN: `can3`
 - Bunker CAN: `can4`
 - Camera: RealSense D435i
 - Low-level PiPER-X API: `http://127.0.0.1:8892`
@@ -42,10 +42,10 @@ source install/setup.bash
 ros2 launch piper_x_aruco_wall_approach touch_marker_full_stack.launch.py \
   execute_allowed:=true \
   calibration_file:=/workspace/handeye/config/piper_x_d435i_eye_in_hand.json \
-  point_cloud_topic:=/camera/camera/depth/color/points \
+  point_cloud_topic:=/front_camera/depth/color/points \
   marker_id:=6 \
   marker_size:=0.03 \
-  can_port:=can3 \
+  can_port:=can2 \
   pub_rate:=80 \
   joint_state_timeout:=2.5 \
   auto_enable:=true \
@@ -65,10 +65,10 @@ source install/setup.bash
 nohup ros2 launch piper_x_aruco_wall_approach touch_marker_full_stack.launch.py \
   execute_allowed:=true \
   calibration_file:=/workspace/handeye/config/piper_x_d435i_eye_in_hand.json \
-  point_cloud_topic:=/camera/camera/depth/color/points \
+  point_cloud_topic:=/front_camera/depth/color/points \
   marker_id:=6 \
   marker_size:=0.03 \
-  can_port:=can3 \
+  can_port:=can2 \
   pub_rate:=80 \
   joint_state_timeout:=2.5 \
   auto_enable:=true \
@@ -168,7 +168,7 @@ ros2 topic echo /feedback/arm_status --once
 Check camera point cloud:
 
 ```bash
-timeout 6 ros2 topic hz /camera/camera/depth/color/points
+timeout 6 ros2 topic hz /front_camera/depth/color/points
 ```
 
 Check ArUco pose:

@@ -23,7 +23,7 @@ There is no force or tactile sensor. A successful `touch` reports:
 ```text
 RealSense D435i color/depth
   -> aruco_ros /aruco_single/pose in base_link
-  -> PointCloud2 /camera/camera/depth/color/points
+  -> PointCloud2 /front_camera/depth/color/points
   -> wall_approach_node
        -> fits wall plane near marker
        -> publishes target poses and normal
@@ -74,7 +74,7 @@ cd ~/ABot-Claw-piper-publish
 The installer enables the user service but does not start it. It does not configure CAN.
 
 `can2` must already be configured and UP before starting the stack. The PiPER-X
-arm is expected on `can2`; the Bunker base is expected on `can3`.
+arm is expected on `can2`; the Bunker base is expected on `can4`.
 
 ## Managed Startup
 
@@ -174,7 +174,7 @@ topics and does not start another RealSense node. The launch starts:
 - HTTP API bridge
 
 It must not be run together with another PiPER-X driver on the selected CAN
-interface. The PiPER-X arm uses `can2`. The Bunker base uses `can3`.
+interface. The PiPER-X arm uses `can2`. The Bunker base uses `can4`.
 
 The current MoveIt configuration uses raw single-arm joint names
 `joint1..joint6`. The integrated stack publishes merged joint names like
@@ -355,7 +355,7 @@ journalctl --user -u piper-touch-marker-stack -f
 curl -s http://127.0.0.1:8892/health | python3 -m json.tool
 ros2 service list | grep marker
 ros2 topic echo /aruco_single/pose --once
-ros2 topic hz /camera/camera/depth/color/points
+ros2 topic hz /front_camera/depth/color/points
 ros2 run tf2_ros tf2_echo base_link camera_color_optical_frame
 ros2 topic list | grep points
 ```

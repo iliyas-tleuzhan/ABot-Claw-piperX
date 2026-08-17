@@ -73,7 +73,7 @@ public:
   {
     aruco_pose_topic_ = declare_parameter<std::string>("aruco_pose_topic", "/aruco_single/pose");
     point_cloud_topic_ = declare_parameter<std::string>(
-      "point_cloud_topic", "/camera/camera/depth/color/points");
+      "point_cloud_topic", "/front_camera/depth/color/points");
     planning_group_ = declare_parameter<std::string>("planning_group", "arm");
     move_group_namespace_ = declare_parameter<std::string>("move_group_namespace", "");
     planning_scene_ = std::make_unique<moveit::planning_interface::PlanningSceneInterface>(

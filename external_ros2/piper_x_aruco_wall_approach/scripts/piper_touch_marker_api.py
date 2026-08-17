@@ -728,7 +728,7 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
             "arm": {
                 "arm_type": "piper_x",
                 "effector_type": "agx_gripper",
-                "can_port": "can3",
+                "can_port": "can2",
             },
             "moveit": {
                 "planning_group": "arm",
@@ -1286,7 +1286,7 @@ def main() -> None:
     parser.add_argument("--host", default=os.environ.get("PIPER_TOUCH_API_HOST", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("PIPER_TOUCH_API_PORT", "8892")))
     parser.add_argument("--marker-pose-topic", default="/aruco_single/pose")
-    parser.add_argument("--point-cloud-topic", default="/camera/camera/depth/color/points")
+    parser.add_argument("--point-cloud-topic", default="/front_camera/depth/color/points")
     parser.add_argument("--marker-id", type=int, default=6)
     parser.add_argument("--marker-size-m", type=float, default=0.03)
     parser.add_argument("--marker-timeout-s", type=float, default=1.0)

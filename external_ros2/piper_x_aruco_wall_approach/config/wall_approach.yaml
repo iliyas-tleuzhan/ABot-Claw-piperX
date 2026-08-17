@@ -1,7 +1,7 @@
 wall_approach_node:
   ros__parameters:
     aruco_pose_topic: /aruco_single/pose
-    point_cloud_topic: /camera/camera/depth/color/points
+    point_cloud_topic: /front_camera/depth/color/points
     planning_group: arm
     end_effector_link: tcp_link
     base_frame: base_link

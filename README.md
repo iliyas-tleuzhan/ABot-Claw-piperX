@@ -72,7 +72,7 @@ docs/
 - TCP offset: `[0.0, 0.0, 0.1425, 0.0, 0.0, 0.0]`
 - joint feedback: `/feedback/joint_states`
 - TCP feedback: `/feedback/tcp_pose`
-- point cloud: `/camera/camera/depth/color/points`
+- point cloud: `/front_camera/depth/color/points`
 - ArUco pose: `/aruco_single/pose`
 - local API: `http://127.0.0.1:8892`
 
@@ -140,7 +140,7 @@ ros2 launch piper_x_aruco_wall_approach touch_marker_full_stack.launch.py \
   align_depth:=true \
   pointcloud:=true \
   use_rviz:=true \
-  point_cloud_topic:=/camera/camera/depth/color/points
+  point_cloud_topic:=/front_camera/depth/color/points
 ```
 
 `auto_control_gate:=false` is intentional for the local tested setup because the

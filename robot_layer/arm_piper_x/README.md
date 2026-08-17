@@ -39,7 +39,7 @@ talk directly to CAN or expose arbitrary joint commands.
 - effector launch argument: `effector_type:=agx_gripper`
 - firmware launch argument: `fw_version:=v189`
 - CAN interface: `can2`, 1 Mbps, configured before ROS launch.
-- Bunker CAN interface: `can3`; Bunker movement is outside the PiPER-X marker-search primitive.
+- Bunker CAN interface: `can4`; Bunker movement is outside the PiPER-X marker-search primitive.
 - MoveIt planning group: `arm`
 - MoveIt TCP/tip link: `tcp_link`
 - TCP offset: `[0.0, 0.0, 0.1425, 0.0, 0.0, 0.0]`

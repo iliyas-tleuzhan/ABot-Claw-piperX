@@ -112,7 +112,7 @@ Fill these in before serious deployment:
 - Feedback topic: `/feedback/joint_states`
 - Camera: wrist RealSense D435i depth camera
 - ArUco: ID `6`, size `0.03 m`
-- Point cloud: `/camera/camera/depth/color/points`
+- Point cloud: `/front_camera/depth/color/points`
 - Skill: `abotclaw-piper-x-manipulation` or short alias `piper-touch-marker`
 
 ## Skill Design Reminder

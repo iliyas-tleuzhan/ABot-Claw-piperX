@@ -15,8 +15,8 @@ workcell stack.
 - Arm launch argument: `arm_type:=piper_x`
 - End effector: `effector_type:=agx_gripper`
 - Firmware argument: `fw_version:=v189`
-- Front arm CAN: `can3` at 1 Mbps.
-- Rear arm CAN: `can2` at 1 Mbps.
+- Front arm CAN: `can2` at 1 Mbps.
+- Rear arm CAN: `can3` at 1 Mbps.
 - MoveIt group: `arm`
 - MoveIt tip/TCP: `tcp_link`
 - TCP offset: `[0.0, 0.0, 0.1425, 0.0, 0.0, 0.0]`
@@ -26,7 +26,7 @@ workcell stack.
 - Gripper width range: `[0.0, 0.1] m`
 - Gripper effort range: `[0.5, 3.0] N`
 - Wrist camera: Intel RealSense D435i depth camera
-- Point cloud: `/camera/camera/depth/color/points`
+- Point cloud: `/front_camera/depth/color/points`
 - ArUco pose: `/aruco_single/pose`
 - Marker: ID `6`, size `0.03 m`
 - PiPER-X Agent Server: `http://127.0.0.1:8893`

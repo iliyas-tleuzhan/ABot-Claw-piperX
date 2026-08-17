@@ -43,7 +43,7 @@ Important values:
 - TCP offset: `[0.0, 0.0, 0.1425, 0.0, 0.0, 0.0]`
 - joint feedback: `/feedback/joint_states`
 - ArUco marker: ID `6`, size `0.10 m`
-- point cloud: `/camera/camera/depth/color/points`
+- point cloud: `/front_camera/depth/color/points`
 
 The contract points to the installed AgileX ROS 2 sources:
 

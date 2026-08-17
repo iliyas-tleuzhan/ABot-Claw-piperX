@@ -7,7 +7,7 @@
 # still accepts bounded directions through /tools/search-step.
 #
 # Defaults:
-# - Front PiPER-X arm CAN: can3, configured by launch/driver layer.
+# - Front PiPER-X arm CAN: can2, configured by launch/driver layer.
 # - Marker: ArUco ID 6, size 0.03 m, configured by launch/API layer.
 # - Camera: RealSense D435i wrist camera, observed through /aruco_single/pose.
 search_marker_node:

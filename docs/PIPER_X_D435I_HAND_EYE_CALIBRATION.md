@@ -282,15 +282,15 @@ ros2 launch realsense2_camera rs_launch.py \
 Expected topics normally include:
 
 ```text
-/camera/camera/color/image_raw
-/camera/camera/color/camera_info
+/front_camera/color/image_raw
+/front_camera/color/camera_info
 ```
 
 Verify:
 
 ```bash
 ros2 topic list | grep color
-ros2 topic echo /camera/camera/color/camera_info --once
+ros2 topic echo /front_camera/color/camera_info --once
 ```
 
 The usual optical frame is `camera_color_optical_frame`.
@@ -313,8 +313,8 @@ ros2 run aruco_ros single --ros-args \
   -p camera_frame:=camera_color_optical_frame \
   -p marker_frame:=aruco_marker_frame \
   -p corner_refinement:=LINES \
-  -r /image:=/camera/camera/color/image_raw \
-  -r /camera_info:=/camera/camera/color/camera_info
+  -r /image:=/front_camera/color/image_raw \
+  -r /camera_info:=/front_camera/color/camera_info
 ```
 
 Verify:
@@ -723,7 +723,7 @@ ros2 topic list | grep points
 It commonly resembles:
 
 ```text
-/camera/camera/depth/color/points
+/front_camera/depth/color/points
 ```
 
 The point cloud should be attached to the wrist and move with the arm.
