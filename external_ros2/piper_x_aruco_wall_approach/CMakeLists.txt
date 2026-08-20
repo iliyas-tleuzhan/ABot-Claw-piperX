@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.8)
 project(piper_x_aruco_wall_approach)
 
 find_package(ament_cmake REQUIRED)
+find_package(controller_manager_msgs REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(moveit_msgs REQUIRED)
@@ -52,6 +53,7 @@ add_executable(search_marker_node src/search_marker_node.cpp)
 target_compile_features(search_marker_node PUBLIC cxx_std_17)
 target_link_libraries(search_marker_node Eigen3::Eigen)
 ament_target_dependencies(search_marker_node
+  controller_manager_msgs
   geometry_msgs
   moveit_ros_planning_interface
   rclcpp
@@ -64,6 +66,7 @@ install(PROGRAMS
   scripts/piper_touch_marker_api.py
   scripts/piper_touch_marker_client.py
   scripts/piper_x_control_gate.py
+  scripts/publish_integrated_moveit_semantic.py
   scripts/publish_handeye_tf.py
   DESTINATION lib/${PROJECT_NAME}
 )

@@ -107,7 +107,10 @@ Fill these in before serious deployment:
 - End effector: AgileX parallel gripper
 - ROS: Jazzy
 - Driver: `agx_arm_ctrl`, `arm_type:=piper_x`, `effector_type:=agx_gripper`, `fw_version:=v189`
-- MoveIt: `agx_arm_moveit`, group `arm`, tip `tcp_link`
+- MoveIt: Trystan's existing `/front_piper/move_group`, group `arm`, tip
+  `tcp_link` in the front-only planning model
+- Combined TF: `base_link -> front_piper_flange_link ->
+  front_camera_color_optical_frame`
 - TCP offset: `[0.0, 0.0, 0.1425, 0.0, 0.0, 0.0]`
 - Feedback topic: `/feedback/joint_states`
 - Camera: wrist RealSense D435i depth camera

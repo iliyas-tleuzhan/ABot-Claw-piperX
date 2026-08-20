@@ -23,8 +23,9 @@ official_local_sources:
   moveit_joint_limits: /home/dase-hw101/agx_arm_ws/src/agx_arm_ros/src/agx_arm_moveit/config/joint_limits.yaml
   moveit_controllers: /home/dase-hw101/agx_arm_ws/src/agx_arm_ros/src/agx_arm_moveit/config/moveit_controllers_gripper.yaml
 moveit:
+  namespace: /front_piper
   planning_group: arm
-  tip_link: tcp_link
+  tip_link: front_piper_flange_link
   base_frame: base_link
   tcp_offset: [0.0, 0.0, 0.1425, 0.0, 0.0, 0.0]
   feedback_topic: /front_piper/feedback/joint_states

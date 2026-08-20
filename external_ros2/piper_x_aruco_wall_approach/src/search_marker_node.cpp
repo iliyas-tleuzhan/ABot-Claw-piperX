@@ -2,6 +2,7 @@
 #include <chrono>
 #include <cctype>
 #include <cmath>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <limits>
@@ -10,6 +11,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include <controller_manager_msgs/srv/list_hardware_components.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <moveit/move_group_interface/move_group_interface.h>
 #include <rclcpp/executors/multi_threaded_executor.hpp>
@@ -110,6 +112,8 @@ public:
     max_single_joint_step_deg_ = declare_parameter<double>("max_single_joint_step_deg", 8.0);
     min_feedback_motion_deg_ = declare_parameter<double>("min_feedback_motion_deg", 1.0);
     physical_motion_timeout_s_ = declare_parameter<double>("physical_motion_timeout_s", 2.0);
+    require_physical_hardware_ = declare_parameter<bool>("require_physical_hardware", true);
+    controller_manager_service_ = declare_parameter<std::string>("controller_manager_service", "");
     center_step_scale_ = declare_parameter<double>("center_step_scale", 1.0);
     joint1_near_sweep_rad_ = declare_parameter<double>("joint1_near_sweep_rad", 1.6);
     joint4_reset_rad_ = declare_parameter<double>("joint4_reset_rad", 0.0);
@@ -146,6 +150,14 @@ public:
       },
       data_subscription_options);
 
+    if (controller_manager_service_.empty()) {
+      controller_manager_service_ = move_group_namespace_.empty()
+        ? "/controller_manager/list_hardware_components"
+        : move_group_namespace_ + "/controller_manager/list_hardware_components";
+    }
+    hardware_client_ = create_client<controller_manager_msgs::srv::ListHardwareComponents>(
+      controller_manager_service_);
+
     service_ = create_service<piper_x_aruco_wall_approach::srv::SearchMarker>(
       "/search_marker",
       [this](
@@ -158,8 +170,9 @@ public:
 
     RCLCPP_INFO(
       get_logger(),
-      "Reactive search service ready: marker_id=%d, settle_time_s=%.2f, detection=%d/%d",
-      marker_id_, settle_time_s_, required_detections_, detection_window_frames_);
+      "Reactive search service ready: marker_id=%d, settle_time_s=%.2f, detection=%d/%d, controller_manager=%s",
+      marker_id_, settle_time_s_, required_detections_, detection_window_frames_,
+      controller_manager_service_.c_str());
   }
 
   void initialise_moveit(const rclcpp::Node::SharedPtr & node)
@@ -535,6 +548,68 @@ private:
     }
     stage = "search_motion_complete";
     message = "completed reactive search target '" + label + "'";
+    return true;
+  }
+
+  bool verify_physical_hardware(std::string & stage, std::string & message)
+  {
+    if (!require_physical_hardware_) {
+      return true;
+    }
+    if (!hardware_client_) {
+      stage = "physical_hardware";
+      message = "controller manager hardware client is not initialized";
+      return false;
+    }
+    if (!hardware_client_->wait_for_service(500ms)) {
+      stage = "physical_hardware";
+      message = "controller manager service unavailable: " + controller_manager_service_;
+      return false;
+    }
+
+    auto request =
+      std::make_shared<controller_manager_msgs::srv::ListHardwareComponents::Request>();
+    auto future = hardware_client_->async_send_request(request);
+    if (future.wait_for(1s) != std::future_status::ready) {
+      stage = "physical_hardware";
+      message = "timed out checking hardware through " + controller_manager_service_;
+      return false;
+    }
+
+    const auto response = future.get();
+    if (!response) {
+      stage = "physical_hardware";
+      message = controller_manager_service_ + " returned no hardware response";
+      return false;
+    }
+
+    bool saw_active_hardware = false;
+    for (const auto & component : response->component) {
+      if (
+        component.name == "FakeSystem" ||
+        component.class_type.find("mock_components") != std::string::npos ||
+        component.class_type.find("GenericSystem") != std::string::npos)
+      {
+        RCLCPP_INFO_THROTTLE(
+          get_logger(), *get_clock(), 5000,
+          "Using AgileX MoveIt demo FakeSystem as a trajectory sampler into the AGX driver control topic");
+        saw_active_hardware = true;
+        continue;
+      }
+      if (component.state.label == "active") {
+        saw_active_hardware = true;
+      }
+    }
+    if (response->component.empty()) {
+      stage = "physical_hardware";
+      message = "no hardware components reported by " + controller_manager_service_;
+      return false;
+    }
+    if (!saw_active_hardware) {
+      stage = "physical_hardware";
+      message = "no active hardware components reported by " + controller_manager_service_;
+      return false;
+    }
     return true;
   }
 
@@ -950,6 +1025,11 @@ private:
       return;
     }
 
+    if (!verify_physical_hardware(response->stage, response->message)) {
+      response->poses_checked = 0;
+      return;
+    }
+
     if (direction != "auto") {
       const bool found = perform_step(
         direction, true, steps_used, found_at_pose, response->stage, response->message);
@@ -1003,6 +1083,8 @@ private:
   double min_feedback_motion_deg_{};
   double min_feedback_motion_rad_{};
   double physical_motion_timeout_s_{};
+  bool require_physical_hardware_{};
+  std::string controller_manager_service_;
   double center_step_scale_{};
   double joint1_near_sweep_rad_{};
   double joint4_reset_rad_{};
@@ -1015,6 +1097,7 @@ private:
   rclcpp::CallbackGroup::SharedPtr service_callback_group_;
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr marker_subscription_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_subscription_;
+  rclcpp::Client<controller_manager_msgs::srv::ListHardwareComponents>::SharedPtr hardware_client_;
   rclcpp::Service<piper_x_aruco_wall_approach::srv::SearchMarker>::SharedPtr service_;
 
   mutable std::mutex data_mutex_;

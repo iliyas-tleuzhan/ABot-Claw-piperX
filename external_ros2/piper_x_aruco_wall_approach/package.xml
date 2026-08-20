@@ -13,6 +13,7 @@
   <exec_depend>agx_arm_ctrl</exec_depend>
   <exec_depend>aruco_ros</exec_depend>
   <exec_depend>action_msgs</exec_depend>
+  <depend>controller_manager_msgs</depend>
   <exec_depend>control_msgs</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>

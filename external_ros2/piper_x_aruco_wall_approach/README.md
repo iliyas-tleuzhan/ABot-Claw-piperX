@@ -1,10 +1,13 @@
 # PiPER-X ArUco Wall Approach
 
-This ROS 2 Jazzy package makes the PiPER-X `tcp_link` approach a wall-mounted ArUco marker using MoveIt and the wrist RealSense D435i depth cloud.
+This ROS 2 Jazzy package makes the front PiPER-X
+`front_piper_flange_link` approach a wall-mounted ArUco marker using the
+integrated MoveIt model and wrist RealSense D435i depth cloud.
 
 It supports two commands:
 
-- `approach`: stop with `tcp_link` at a pre-touch clearance, default `0.05 m`.
+- `approach`: stop with `front_piper_flange_link` at a pre-touch clearance,
+  default `0.05 m`.
 - `touch`: calculate the final marker target from the current camera/depth state and send one MoveIt plan directly to that target, default final clearance `0.005 m`.
 - `go-home`: move to the saved six-joint home pose.
 - `go-previous`: move back to the saved six-joint previous pose.
@@ -28,7 +31,7 @@ RealSense D435i color/depth
        -> fits wall plane near marker
        -> publishes target poses and normal
        -> updates MoveIt detected_wall collision object
-       -> plans/executes tcp_link targets through MoveIt
+       -> plans/executes front_piper_flange_link targets through MoveIt
        -> prefers elbow/wrist motion by keeping joint1 near its current angle
   -> /run_marker_task ROS 2 service
   -> piper_touch_marker_api HTTP bridge on 127.0.0.1:8892
@@ -41,7 +44,7 @@ The calibrated TF chain must be:
 ```text
 base_link
   -> PiPER-X links
-  -> flange_link
+  -> front_piper_flange_link
   -> front_camera_link
   -> front_camera_color_optical_frame
 ```
@@ -138,7 +141,7 @@ ros2 launch piper_x_aruco_wall_approach touch_marker_full_stack.launch.py \
   execute_allowed:=false \
   calibration_file:=/home/dase-hw101/handeye/config/piper_x_d435i_eye_in_hand.json \
   piper_namespace:=front_piper \
-  use_piper_motion_stack:=true \
+  use_piper_motion_stack:=false \
   use_handeye_tf_publisher:=false \
   can_port:=can2 \
   use_realsense:=false \
@@ -147,7 +150,7 @@ ros2 launch piper_x_aruco_wall_approach touch_marker_full_stack.launch.py \
   point_cloud_topic:=/front_camera/depth/color/points \
   camera_root_frame:=front_camera_link \
   camera_optical_frame:=front_camera_color_optical_frame \
-  use_front_piper_joint_state_adapter:=true \
+  use_front_piper_joint_state_adapter:=false \
   integrated_joint_state_topic:=/joint_states \
   front_piper_joint_prefix:=front_piper_ \
   joint_state_topic:=/front_piper/feedback/joint_states \
@@ -161,12 +164,10 @@ ros2 launch piper_x_aruco_wall_approach touch_marker_full_stack.launch.py \
   point_cloud_timeout:=2.0
 ```
 
-In integrated Bunker mode, the launch subscribes to Trystan's front RealSense
-topics and does not start another RealSense node. The launch starts:
+In integrated Bunker mode, the launch subscribes to Trystan's front RealSense,
+driver feedback, MoveIt, and TF topics and does not start duplicate hardware or
+MoveIt nodes. The launch starts only:
 
-- front PiPER-X + MoveIt under `piper_namespace:=front_piper` with
-  `arm_type:=piper_x`, `effector_type:=agx_gripper`, `fw_version:=v189`,
-  `tcp_offset:=[0.0, 0.0, 0.1425, 0.0, 0.0, 0.0]`
 - packaged hand-eye TF publisher
 - `aruco_ros` marker detector
 - `search_marker_node`
@@ -176,11 +177,19 @@ topics and does not start another RealSense node. The launch starts:
 It must not be run together with another PiPER-X driver on the selected CAN
 interface. The PiPER-X arm uses `can2`. The Bunker base uses `can4`.
 
-The current MoveIt configuration uses raw single-arm joint names
-`joint1..joint6`. The integrated stack publishes merged joint names like
-`front_piper_joint1` on `/joint_states`, so this package starts
-`front_piper_joint_state_adapter.py` by default. That node republishes the front
-six joints as raw `joint1..joint6` on `/front_piper/feedback/joint_states`.
+The combined Bunker URDF publishes prefixed names such as
+`front_piper_joint1` on `/joint_states`, while Trystan's namespaced front
+MoveIt model intentionally uses raw `joint1..joint6` and `tcp_link`. The
+integrated front driver already publishes raw feedback on
+`/front_piper/feedback/joint_states`, so this package does not start the
+adapter by default. Enable `use_front_piper_joint_state_adapter:=true` only
+when that raw topic is absent.
+
+MoveIt clients use `/front_piper/robot_description` with
+`/front_piper/robot_description_semantic`; do not pair the front-only SRDF
+with the combined root `/robot_description`. Perception uses the combined TF
+chain `base_link -> front_piper_flange_link ->
+front_camera_color_optical_frame`.
 
 Motion interfaces are namespaced under `/front_piper`:
 
@@ -188,11 +197,21 @@ Motion interfaces are namespaced under `/front_piper`:
 - control topic: `/front_piper/control/joint_states`
 - MoveIt namespace: `/front_piper`
 - control gate service: `/front_piper/control_enable`
+- controller-manager hardware check:
+  `/front_piper/controller_manager/list_hardware_components`
 
 If another stack already starts a compatible front-PiPER MoveIt/controller
 bundle, set `use_piper_motion_stack:=false` and keep the same interface names.
 If Trystan's combined URDF publishes the camera TF, keep
 `use_handeye_tf_publisher:=false` to avoid duplicate static transforms.
+
+AgileX's `start_single_agx_arm_moveit.launch.py` intentionally includes the
+MoveIt demo ros2_control controller. `/health` may therefore report
+`hardware_fake: true` with `FakeSystem` or `mock_components/GenericSystem`.
+That is allowed when the fake controller is being used as a trajectory sampler
+and its output is remapped to the AGX driver command topic,
+`/front_piper/control/joint_states`. Search still verifies real motion by
+watching `/front_piper/feedback/joint_states` after MoveIt execution.
 
 ## Marker Search
 
@@ -345,7 +364,9 @@ Go back to the previous pose.
 Save current pose as previous pose.
 ```
 
-ABot-Claw must call `/health` first. It must not call `execute=true` unless health reports `execution_allowed: true`.
+ABot-Claw must call `/health` first. It must not call `execute=true` unless
+health reports `execution_allowed: true` and the required camera, MoveIt, marker
+or search, and joint-state readiness gates are satisfied.
 
 ## Diagnostics
 

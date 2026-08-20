@@ -7,9 +7,12 @@
 # still accepts bounded directions through /tools/search-step.
 #
 # Defaults:
-# - Front PiPER-X arm CAN: can2, configured by launch/driver layer.
+# - Front PiPER-X arm CAN: can2, configured by Trystan's integrated driver.
 # - Marker: ArUco ID 6, size 0.03 m, configured by launch/API layer.
 # - Camera: RealSense D435i wrist camera, observed through /aruco_single/pose.
+# - MoveIt: existing /front_piper namespace with the front-only `arm` group.
+# - Full-system TF: base_link -> front_piper_flange_link ->
+#   front_camera_color_optical_frame.
 search_marker_node:
   ros__parameters:
     aruco_pose_topic: /aruco_single/pose

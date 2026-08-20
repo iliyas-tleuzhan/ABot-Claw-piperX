@@ -591,3 +591,18 @@ def test_namespace_from_action_supports_front_piper_moveit():
         == "/front_piper"
     )
     assert api.namespace_from_action("/arm_controller/follow_joint_trajectory") == ""
+
+
+def test_controller_manager_service_from_action_supports_front_piper_moveit():
+    assert (
+        api.controller_manager_service_from_action(
+            "/front_piper/arm_controller/follow_joint_trajectory"
+        )
+        == "/front_piper/controller_manager/list_hardware_components"
+    )
+    assert (
+        api.controller_manager_service_from_action(
+            "/arm_controller/follow_joint_trajectory"
+        )
+        == "/controller_manager/list_hardware_components"
+    )

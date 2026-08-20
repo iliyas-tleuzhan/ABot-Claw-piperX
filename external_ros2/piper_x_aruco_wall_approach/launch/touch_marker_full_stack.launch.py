@@ -48,6 +48,7 @@ def generate_launch_description():
     camera_info_topic = LaunchConfiguration("camera_info_topic")
     camera_root_frame = LaunchConfiguration("camera_root_frame")
     camera_optical_frame = LaunchConfiguration("camera_optical_frame")
+    handeye_parent_frame = LaunchConfiguration("handeye_parent_frame")
     marker_timeout = LaunchConfiguration("marker_timeout")
     point_cloud_timeout = LaunchConfiguration("point_cloud_timeout")
     home_pose_file = LaunchConfiguration("home_pose_file")
@@ -57,6 +58,9 @@ def generate_launch_description():
     joint_state_timeout = LaunchConfiguration("joint_state_timeout")
     trajectory_action = LaunchConfiguration("trajectory_action")
     enable_service = LaunchConfiguration("enable_service")
+    controller_manager_service = LaunchConfiguration("controller_manager_service")
+    use_integrated_moveit_semantic_bridge = LaunchConfiguration("use_integrated_moveit_semantic_bridge")
+    integrated_semantic_topic = LaunchConfiguration("integrated_semantic_topic")
     control_topic = LaunchConfiguration("control_topic")
     robot_description_topic = LaunchConfiguration("robot_description_topic")
     robot_description_semantic_topic = LaunchConfiguration("robot_description_semantic_topic")
@@ -83,7 +87,10 @@ def generate_launch_description():
         DeclareLaunchArgument("prefer_elbow_motion", default_value="true"),
         DeclareLaunchArgument("goal_orientation_tolerance", default_value="0.35"),
         DeclareLaunchArgument("piper_namespace", default_value="front_piper"),
-        DeclareLaunchArgument("use_piper_motion_stack", default_value="true"),
+        # Trystan's integrated stack owns the drivers and the namespaced
+        # front MoveIt instance.  Opt into the standalone stack only when
+        # running this package outside the Bunker system.
+        DeclareLaunchArgument("use_piper_motion_stack", default_value="false"),
         DeclareLaunchArgument("use_aruco_detector", default_value="true"),
         DeclareLaunchArgument("use_wall_approach_node", default_value="true"),
         DeclareLaunchArgument("use_search_marker_node", default_value="true"),
@@ -93,7 +100,7 @@ def generate_launch_description():
         DeclareLaunchArgument("auto_enable", default_value="true"),
         DeclareLaunchArgument("follow", default_value="true"),
         DeclareLaunchArgument("auto_control_gate", default_value="false"),
-        DeclareLaunchArgument("use_piper_control_gate", default_value="true"),
+        DeclareLaunchArgument("use_piper_control_gate", default_value="false"),
         DeclareLaunchArgument("pub_rate", default_value="80"),
         DeclareLaunchArgument("enable_color", default_value="true"),
         DeclareLaunchArgument("enable_depth", default_value="true"),
@@ -104,7 +111,15 @@ def generate_launch_description():
         DeclareLaunchArgument("pointcloud", default_value="true"),
         DeclareLaunchArgument("use_realsense", default_value="false"),
         DeclareLaunchArgument("use_handeye_tf_publisher", default_value="false"),
-        DeclareLaunchArgument("use_front_piper_joint_state_adapter", default_value="true"),
+        # The integrated front driver already publishes raw feedback on
+        # /front_piper/feedback/joint_states.  Enable this fallback only when
+        # that topic is absent and only /joint_states is available.
+        DeclareLaunchArgument("use_front_piper_joint_state_adapter", default_value="false"),
+        DeclareLaunchArgument("use_integrated_moveit_semantic_bridge", default_value="true"),
+        DeclareLaunchArgument(
+            "integrated_semantic_topic",
+            default_value="/front_piper/integrated_robot_description_semantic",
+        ),
         DeclareLaunchArgument("integrated_joint_state_topic", default_value="/joint_states"),
         DeclareLaunchArgument("front_piper_joint_prefix", default_value="front_piper_"),
         DeclareLaunchArgument(
@@ -128,20 +143,27 @@ def generate_launch_description():
             "camera_optical_frame",
             default_value="front_camera_color_optical_frame",
         ),
+        DeclareLaunchArgument("handeye_parent_frame", default_value="front_piper_flange_link"),
         DeclareLaunchArgument("marker_timeout", default_value="1.0"),
         DeclareLaunchArgument("point_cloud_timeout", default_value="2.0"),
-        DeclareLaunchArgument("joint_state_topic", default_value="/front_piper/feedback/joint_states"),
+        DeclareLaunchArgument("joint_state_topic", default_value="/joint_states"),
         DeclareLaunchArgument("control_topic", default_value="/front_piper/control/joint_states"),
-        DeclareLaunchArgument("robot_description_topic", default_value="/front_piper/robot_description"),
+        # Trystan's active MoveIt model is the prefixed full-system URDF.  The
+        # semantic bridge below supplies its matching front-arm SRDF.
+        DeclareLaunchArgument("robot_description_topic", default_value="/robot_description"),
         DeclareLaunchArgument(
             "robot_description_semantic_topic",
-            default_value="/front_piper/robot_description_semantic",
+            default_value="/front_piper/integrated_robot_description_semantic",
         ),
         DeclareLaunchArgument(
             "trajectory_action",
             default_value="/front_piper/arm_controller/follow_joint_trajectory",
         ),
         DeclareLaunchArgument("enable_service", default_value="/front_piper/enable_agx_arm"),
+        DeclareLaunchArgument(
+            "controller_manager_service",
+            default_value="/front_piper/controller_manager/list_hardware_components",
+        ),
         DeclareLaunchArgument("joint_state_timeout", default_value="2.5"),
         DeclareLaunchArgument(
             "home_pose_file",
@@ -215,6 +237,14 @@ def generate_launch_description():
         ),
         Node(
             package="piper_x_aruco_wall_approach",
+            executable="publish_integrated_moveit_semantic.py",
+            name="front_piper_integrated_moveit_semantic",
+            output="screen",
+            parameters=[{"topic": integrated_semantic_topic}],
+            condition=IfCondition(use_integrated_moveit_semantic_bridge),
+        ),
+        Node(
+            package="piper_x_aruco_wall_approach",
             executable="front_piper_joint_state_adapter.py",
             name="front_piper_joint_state_adapter",
             output="screen",
@@ -239,6 +269,9 @@ def generate_launch_description():
                 ],
                 "gate_service_name": "/front_piper/control_enable",
                 "hold_open_after_active_s": 4.0,
+                "open_on_startup": True,
+                "close_on_startup": False,
+                "close_when_idle": False,
             }],
             condition=IfCondition(use_piper_control_gate),
         ),
@@ -251,7 +284,7 @@ def generate_launch_description():
                 "--calibration",
                 calibration_file,
                 "--parent-frame",
-                "flange_link",
+                handeye_parent_frame,
                 "--camera-root",
                 camera_root_frame,
                 "--optical-frame",
@@ -318,6 +351,7 @@ def generate_launch_description():
                     "marker_id": ParameterValue(marker_id, value_type=int),
                     "joint_state_topic": joint_state_topic,
                     "move_group_namespace": piper_namespace,
+                    "controller_manager_service": controller_manager_service,
                 },
             ],
             remappings=[
@@ -361,6 +395,10 @@ def generate_launch_description():
                 trajectory_action,
                 "--enable-service",
                 enable_service,
+                "--controller-manager-service",
+                controller_manager_service,
+                "--command-joint-prefix",
+                "front_piper_",
             ],
             condition=IfCondition(use_marker_api),
         ),

@@ -58,14 +58,14 @@ def test_touch_marker_full_stack_launch_loads():
             )
     assert "SetEnvironmentVariable" in entity_types
     assert launch_defaults["piper_namespace"] == "front_piper"
-    assert launch_defaults["use_piper_motion_stack"] == "true"
+    assert launch_defaults["use_piper_motion_stack"] == "false"
     assert launch_defaults["use_aruco_detector"] == "true"
     assert launch_defaults["use_wall_approach_node"] == "true"
     assert launch_defaults["use_search_marker_node"] == "true"
     assert launch_defaults["use_marker_api"] == "true"
     assert launch_defaults["use_realsense"] == "false"
     assert launch_defaults["use_handeye_tf_publisher"] == "false"
-    assert launch_defaults["use_front_piper_joint_state_adapter"] == "true"
+    assert launch_defaults["use_front_piper_joint_state_adapter"] == "false"
     assert launch_defaults["integrated_joint_state_topic"] == "/joint_states"
     assert launch_defaults["front_piper_joint_prefix"] == "front_piper_"
     assert launch_defaults["camera_image_topic"] == "/front_camera/color/image_raw"
@@ -76,9 +76,12 @@ def test_touch_marker_full_stack_launch_loads():
         (substitution_text(key), substitution_text(value))
         for key, value in include_launch_arguments
     ]
-    assert launch_defaults["joint_state_topic"] == "/front_piper/feedback/joint_states"
+    assert launch_defaults["joint_state_topic"] == "/joint_states"
     assert launch_defaults["control_topic"] == "/front_piper/control/joint_states"
-    assert launch_defaults["robot_description_topic"] == "/front_piper/robot_description"
+    assert launch_defaults["robot_description_topic"] == "/robot_description"
+    assert launch_defaults["robot_description_semantic_topic"] == "/front_piper/integrated_robot_description_semantic"
+    assert launch_defaults["integrated_semantic_topic"] == "/front_piper/integrated_robot_description_semantic"
+    assert launch_defaults["handeye_parent_frame"] == "front_piper_flange_link"
     assert (
         launch_defaults["robot_description_semantic_topic"]
         == "/front_piper/robot_description_semantic"
@@ -88,6 +91,10 @@ def test_touch_marker_full_stack_launch_loads():
         == "/front_piper/arm_controller/follow_joint_trajectory"
     )
     assert launch_defaults["enable_service"] == "/front_piper/enable_agx_arm"
+    assert (
+        launch_defaults["controller_manager_service"]
+        == "/front_piper/controller_manager/list_hardware_components"
+    )
     assert "wall_approach_node" in node_executables
     assert "search_marker_node" in node_executables
     assert "front_piper_joint_state_adapter.py" in node_executables
@@ -142,6 +149,12 @@ def test_touch_marker_full_stack_launch_loads():
     assert any(
         substitution_text(key) == "move_group_namespace"
         and substitution_text(value) == "piper_namespace"
+        for params in search_marker_inline_params
+        for key, value in params.items()
+    )
+    assert any(
+        substitution_text(key) == "controller_manager_service"
+        and substitution_text(value) == "controller_manager_service"
         for params in search_marker_inline_params
         for key, value in params.items()
     )

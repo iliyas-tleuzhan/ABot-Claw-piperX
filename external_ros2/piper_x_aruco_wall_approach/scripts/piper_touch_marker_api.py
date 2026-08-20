@@ -26,6 +26,11 @@ import uvicorn
 
 from piper_x_aruco_wall_approach.srv import RunMarkerTask, SearchMarker
 
+try:
+    from controller_manager_msgs.srv import ListHardwareComponents
+except ImportError:  # pragma: no cover - only used on systems without ros2_control msgs installed.
+    ListHardwareComponents = None  # type: ignore[assignment]
+
 
 SUPPORTED_ARMS = {"front", "rear"}
 
@@ -72,6 +77,13 @@ def namespace_from_action(action_name: str) -> str:
     if len(parts) <= 2:
         return ""
     return "/" + "/".join(parts[:-2])
+
+
+def controller_manager_service_from_action(action_name: str) -> str:
+    namespace = namespace_from_action(action_name)
+    if not namespace:
+        return "/controller_manager/list_hardware_components"
+    return f"{namespace}/controller_manager/list_hardware_components"
 
 
 def execution_allowed_from_env() -> bool:
@@ -124,6 +136,10 @@ class HealthSnapshot:
     configured_marker_id: int
     configured_marker_size_m: float
     execution_allowed: bool
+    hardware_ready: bool = True
+    hardware_fake: bool = False
+    hardware_components: Optional[list[Dict[str, Any]]] = None
+    hardware_message: Optional[str] = None
     search_marker_service_available: bool = True
     marker_pose_age_s: Optional[float] = None
     point_cloud_age_s: Optional[float] = None
@@ -180,6 +196,11 @@ class HealthSnapshot:
             "configured_marker_id": self.configured_marker_id,
             "configured_marker_size_m": self.configured_marker_size_m,
             "execution_allowed": self.execution_allowed,
+            "physical_execution_ready": self.execution_allowed and self.moveit_available,
+            "hardware_ready": self.hardware_ready,
+            "hardware_fake": self.hardware_fake,
+            "hardware_components": self.hardware_components or [],
+            "hardware_message": self.hardware_message,
             "marker_pose_age_s": self.marker_pose_age_s,
             "point_cloud_age_s": self.point_cloud_age_s,
             "marker_pose_header_age_s": self.marker_pose_header_age_s,
@@ -243,6 +264,8 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         joint_state_timeout_s: float,
         trajectory_action: str,
         enable_service: str,
+        controller_manager_service: Optional[str] = None,
+        command_joint_prefix: str = "front_piper_",
     ):
         super().__init__("piper_touch_marker_api_bridge")
         self.marker_pose_topic = marker_pose_topic
@@ -255,6 +278,11 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         self.joint_state_timeout_s = joint_state_timeout_s
         self.trajectory_action = trajectory_action
         self.enable_service = enable_service
+        self.command_joint_prefix = str(command_joint_prefix or "front_piper_")
+        self.controller_manager_service = (
+            controller_manager_service
+            or controller_manager_service_from_action(self.trajectory_action)
+        )
         self.home_pose_file = str(Path(home_pose_file).expanduser())
         self.previous_pose_file = str(Path(previous_pose_file).expanduser())
         self.found_marker_pose_file = str(Path(found_marker_pose_file).expanduser())
@@ -278,6 +306,11 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         self._client = self.create_client(RunMarkerTask, "/run_marker_task")
         self._search_client = self.create_client(SearchMarker, "/search_marker")
         self._enable_client = self.create_client(SetBool, self.enable_service)
+        self._hardware_client = (
+            self.create_client(ListHardwareComponents, self.controller_manager_service)
+            if ListHardwareComponents is not None
+            else None
+        )
         self._home_client = ActionClient(
             self,
             FollowJointTrajectory,
@@ -285,6 +318,7 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         )
         self._enable_clients: dict[str, Any] = {"front": self._enable_client}
         self._trajectory_clients: dict[str, Any] = {"front": self._home_client}
+        self._hardware_clients: dict[str, Any] = {"front": self._hardware_client}
         self._joint_state_topics_by_arm = {
             "front": arm_joint_state_topic("front"),
             "rear": arm_joint_state_topic("rear"),
@@ -322,6 +356,119 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         if selected not in self._enable_clients:
             self._enable_clients[selected] = self.create_client(SetBool, arm_enable_service(selected))
         return self._enable_clients[selected]
+
+    def _hardware_client_for_arm(self, arm: str):
+        selected = normalize_arm(arm)
+        if ListHardwareComponents is None:
+            return None
+        if selected not in self._hardware_clients:
+            self._hardware_clients[selected] = self.create_client(
+                ListHardwareComponents,
+                controller_manager_service_from_action(arm_trajectory_action(selected)),
+            )
+        return self._hardware_clients[selected]
+
+    def hardware_status(self, arm: str = "front") -> Dict[str, Any]:
+        selected = normalize_arm(arm)
+        hardware_client = self._hardware_client_for_arm(selected)
+        service_name = (
+            self.controller_manager_service
+            if selected == "front"
+            else controller_manager_service_from_action(arm_trajectory_action(selected))
+        )
+        if ListHardwareComponents is None or hardware_client is None:
+            return {
+                "ready": False,
+                "fake": False,
+                "components": [],
+                "message": "controller_manager_msgs is unavailable, so physical hardware cannot be verified",
+            }
+        if not hardware_client.wait_for_service(timeout_sec=0.2):
+            return {
+                "ready": False,
+                "fake": False,
+                "components": [],
+                "message": f"controller manager service unavailable: {service_name}",
+            }
+
+        future = hardware_client.call_async(ListHardwareComponents.Request())
+        deadline = time.monotonic() + 1.0
+        while rclpy.ok() and not future.done() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        if not future.done():
+            return {
+                "ready": False,
+                "fake": False,
+                "components": [],
+                "message": f"timed out checking hardware through {service_name}",
+            }
+        response = future.result()
+        if response is None:
+            return {
+                "ready": False,
+                "fake": False,
+                "components": [],
+                "message": f"{service_name} returned no hardware response",
+            }
+
+        components = []
+        fake = False
+        active = False
+        for component in getattr(response, "component", []):
+            state = getattr(getattr(component, "state", None), "label", "")
+            plugin_name = str(getattr(component, "plugin_name", ""))
+            class_type = str(getattr(component, "class_type", ""))
+            name = str(getattr(component, "name", ""))
+            component_type = str(getattr(component, "type", ""))
+            components.append(
+                {
+                    "name": name,
+                    "type": component_type,
+                    "plugin_name": plugin_name,
+                    "class_type": class_type,
+                    "state": state,
+                }
+            )
+            active = active or state == "active"
+            fake = (
+                fake
+                or name == "FakeSystem"
+                or "mock_components" in plugin_name
+                or "GenericSystem" in plugin_name
+                or "mock_components" in class_type
+                or "GenericSystem" in class_type
+            )
+
+        if fake:
+            return {
+                "ready": True,
+                "fake": True,
+                "components": components,
+                "message": (
+                    "AgileX MoveIt demo controller is backed by ros2_control FakeSystem/mock_components; "
+                    "allowed as a trajectory sampler into the AGX driver control topic"
+                ),
+            }
+        if not components:
+            return {
+                "ready": False,
+                "fake": False,
+                "components": components,
+                "message": f"no hardware components reported by {service_name}",
+            }
+        if not active:
+            return {
+                "ready": False,
+                "fake": False,
+                "components": components,
+                "message": f"no active hardware components reported by {service_name}",
+            }
+        return {
+            "ready": True,
+            "fake": False,
+            "components": components,
+            "message": "physical ros2_control hardware verified",
+        }
 
     @staticmethod
     def _default_home_pose_file() -> str:
@@ -447,6 +594,7 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
             joint_state_age_s is not None
             and joint_state_age_s <= self.joint_state_timeout_s
         )
+        hardware_status = self.hardware_status()
         names_and_types = dict(self.get_service_names_and_types())
         moveit_namespace = namespace_from_action(self.trajectory_action)
         moveit_available = (
@@ -466,6 +614,10 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
             configured_marker_id=self.marker_id,
             configured_marker_size_m=self.marker_size_m,
             execution_allowed=execution_allowed_from_env(),
+            hardware_ready=bool(hardware_status.get("ready", False)),
+            hardware_fake=bool(hardware_status.get("fake", False)),
+            hardware_components=list(hardware_status.get("components", [])),
+            hardware_message=str(hardware_status.get("message", "")),
             marker_pose_age_s=marker_age_s,
             point_cloud_age_s=cloud_age_s,
             marker_pose_header_age_s=marker_header_age_s,
@@ -593,9 +745,9 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
                 "arm": selected_arm,
                 "trajectory_action": trajectory_action,
             }
-
         goal = FollowJointTrajectory.Goal()
-        goal.trajectory.joint_names = list(joint_names)
+        command_names = self._command_joint_names(joint_names, selected_arm)
+        goal.trajectory.joint_names = command_names
         point = JointTrajectoryPoint()
         point.positions = list(positions)
         point.velocities = [0.0] * len(positions)
@@ -646,6 +798,17 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
             "arm": selected_arm,
             "trajectory_action": trajectory_action,
         }
+
+    @staticmethod
+    def _raw_joint_name(name: str) -> str:
+        for prefix in ("front_piper_", "rear_piper_"):
+            if name.startswith(prefix):
+                return name[len(prefix):]
+        return name
+
+    def _command_joint_names(self, names, arm: str) -> list[str]:
+        prefix = self.command_joint_prefix if normalize_arm(arm) == "front" else "rear_piper_"
+        return [f"{prefix}{self._raw_joint_name(str(name))}" for name in names]
 
     def go_home(self, request: HomeRequest) -> Dict[str, Any]:
         return self._execute_saved_joint_pose("home", self.home_joint_names, self.home_positions, request)
@@ -700,10 +863,16 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
 
         joint_positions = dict(zip(joint_state.name, joint_state.position))
         joint_names = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
-        missing = [name for name in joint_names if name not in joint_positions]
+        selected_positions = {
+            name: joint_positions.get(
+                f"front_piper_{name}", joint_positions.get(name)
+            )
+            for name in joint_names
+        }
+        missing = [name for name, position in selected_positions.items() if position is None]
         if missing:
             raise RuntimeError(f"joint state missing required joints: {missing}")
-        positions = [float(joint_positions[name]) for name in joint_names]
+        positions = [float(selected_positions[name]) for name in joint_names]
         names = list(joint_names)
         saved_positions = list(positions)
         if "gripper" in joint_positions:
@@ -731,9 +900,15 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
                 "can_port": "can2",
             },
             "moveit": {
+                "namespace": "/front_piper",
                 "planning_group": "arm",
-                "tip_link": "tcp_link",
+                "tip_link": "front_piper_flange_link",
                 "tcp_offset": [0.0, 0.0, 0.1425, 0.0, 0.0, 0.0],
+            },
+            "tf": {
+                "base_frame": "base_link",
+                "flange_frame": "front_piper_flange_link",
+                "camera_optical_frame": "front_camera_color_optical_frame",
             },
             "joint_state": {
                 "names": names,
@@ -791,7 +966,21 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
 
 class FakeUnavailableAdapter(RosMarkerTaskAdapter):
     def health(self) -> HealthSnapshot:
-        return HealthSnapshot(False, False, False, False, False, False, False, 6, 0.03, execution_allowed_from_env(), False)
+        return HealthSnapshot(
+            ros_ok=False,
+            marker_pose_available=False,
+            point_cloud_available=False,
+            moveit_available=False,
+            marker_task_service_available=False,
+            home_action_available=False,
+            joint_state_available=False,
+            configured_marker_id=6,
+            configured_marker_size_m=0.03,
+            execution_allowed=execution_allowed_from_env(),
+            hardware_ready=False,
+            hardware_fake=False,
+            search_marker_service_available=False,
+        )
 
     def run_task(self, mode: str, request: MarkerTaskRequest) -> Dict[str, Any]:
         raise RuntimeError("ROS adapter not initialized")
@@ -1294,13 +1483,15 @@ def main() -> None:
     parser.add_argument("--home-pose-file", default=MarkerTaskBridge._default_home_pose_file())
     parser.add_argument("--previous-pose-file", default=None)
     parser.add_argument("--found-marker-pose-file", default=None)
-    parser.add_argument("--joint-state-topic", default="/feedback/joint_states")
+    parser.add_argument("--joint-state-topic", default="/joint_states")
     parser.add_argument("--joint-state-timeout-s", type=float, default=1.0)
     parser.add_argument(
         "--trajectory-action",
-        default="/arm_controller/follow_joint_trajectory",
+        default="/front_piper/arm_controller/follow_joint_trajectory",
     )
-    parser.add_argument("--enable-service", default="/enable_agx_arm")
+    parser.add_argument("--enable-service", default="/front_piper/enable_agx_arm")
+    parser.add_argument("--controller-manager-service", default=None)
+    parser.add_argument("--command-joint-prefix", default="front_piper_")
     args, _ros_args = parser.parse_known_args()
 
     rclpy.init()
@@ -1320,6 +1511,8 @@ def main() -> None:
         joint_state_timeout_s=args.joint_state_timeout_s,
         trajectory_action=args.trajectory_action,
         enable_service=args.enable_service,
+        controller_manager_service=args.controller_manager_service,
+        command_joint_prefix=args.command_joint_prefix,
     )
     executor = rclpy.executors.MultiThreadedExecutor()
     executor.add_node(adapter)

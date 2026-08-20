@@ -12,8 +12,9 @@ arm:
   effector_type: none
   can_port: front_can2_rear_can3
 moveit:
+  namespace: /front_piper
   planning_group: arm
-  tip_link: tcp_link
+  tip_link: front_piper_flange_link
   tcp_offset: [0.0, 0.0, 0.1425, 0.0, 0.0, 0.0]
 joint_state:
   names:

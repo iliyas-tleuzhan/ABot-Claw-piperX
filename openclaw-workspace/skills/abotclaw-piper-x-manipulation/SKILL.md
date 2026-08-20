@@ -17,10 +17,11 @@ workcell stack.
 - Firmware argument: `fw_version:=v189`
 - Front arm CAN: `can2` at 1 Mbps.
 - Rear arm CAN: `can3` at 1 Mbps.
-- MoveIt group: `arm`
-- MoveIt tip/TCP: `tcp_link`
+- MoveIt namespace: `/front_piper`
+- MoveIt group: `arm` in the namespaced front-arm semantic model
+- MoveIt tip/TCP: `tcp_link` inside `/front_piper`'s planning model
 - TCP offset: `[0.0, 0.0, 0.1425, 0.0, 0.0, 0.0]`
-- Joint feedback: `/feedback/joint_states`
+- Joint feedback: `/front_piper/feedback/joint_states`
 - Gripper command: `/control/joint_states`
 - Gripper joint: `gripper`
 - Gripper width range: `[0.0, 0.1] m`
@@ -32,6 +33,19 @@ workcell stack.
 - PiPER-X Agent Server: `http://127.0.0.1:8893`
 - Low-level marker bridge: `http://127.0.0.1:8892`
 - Bunker CAN: `can4`; do not move Bunker during PiPER-X marker search unless a separate Bunker controller is explicitly enabled.
+
+This is the integrated dual-PiPER Bunker contract. Trystan owns the front and
+rear drivers, combined `/joint_states`, cameras, and root TF tree. Reuse those
+nodes and do not start duplicates. The combined MoveIt/TF names are
+`front_piper_joint1..6`, `front_piper_flange_link`, and
+`front_camera_color_optical_frame`; the front MoveIt planning group is `arm`
+under `/front_piper` and uses those prefixed names.
+
+Use the combined TF chain `base_link -> front_piper_flange_link ->
+front_camera_color_optical_frame` for perception. Use the combined
+`/robot_description` with the matching integrated front SRDF. Never pair the
+old standalone AgileX SRDF (`base_link`, `tcp_link`, raw `joint1..6`) with the
+combined dual-arm URDF.
 
 Default arm selection is `front`. If the user says `rear arm`, `back arm`, or
 `rear Piper`, pass `--arm rear` or JSON `"arm":"rear"`. Otherwise pass

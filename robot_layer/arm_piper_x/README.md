@@ -40,10 +40,11 @@ talk directly to CAN or expose arbitrary joint commands.
 - firmware launch argument: `fw_version:=v189`
 - CAN interface: `can2`, 1 Mbps, configured before ROS launch.
 - Bunker CAN interface: `can4`; Bunker movement is outside the PiPER-X marker-search primitive.
-- MoveIt planning group: `arm`
-- MoveIt TCP/tip link: `tcp_link`
+- MoveIt namespace: `/front_piper`
+- MoveIt planning group: `arm` in Trystan's front-arm semantic model
+- MoveIt TCP/tip link: `tcp_link` inside that namespaced planning model
 - TCP offset: `[0.0, 0.0, 0.1425, 0.0, 0.0, 0.0]`
-- arm feedback topic: `/feedback/joint_states`
+- arm feedback topic: `/front_piper/feedback/joint_states`
 - TCP feedback topic: `/feedback/tcp_pose`
 - gripper command topic: `/control/joint_states`
 - gripper command type: `sensor_msgs/msg/JointState`
@@ -58,6 +59,9 @@ talk directly to CAN or expose arbitrary joint commands.
 - marker: ID `6`, size `0.03 m`
 - hand-eye calibration file:
   `/home/dase-hw101/handeye/config/piper_x_d435i_eye_in_hand.json`
+- calibrated TF parent: `front_piper_flange_link`
+- calibrated camera frames: `front_camera_link` and
+  `front_camera_color_optical_frame`
 
 ## Bunker Integration Defaults
 
@@ -75,13 +79,15 @@ RealSense publisher:
 - integrated robot joint state input: `/joint_states`
 - adapted raw front-arm feedback output: `/front_piper/feedback/joint_states`
 
-The current marker and search code still uses the AgileX single-arm MoveIt
-model with raw joint names `joint1` through `joint6`. Trystan's integrated
-stack publishes merged names such as `front_piper_joint1` on `/joint_states`.
-The `front_piper_joint_state_adapter` node converts those six front-arm names
-into raw `joint1..joint6` on `/front_piper/feedback/joint_states`, which keeps
-the existing single-arm MoveIt/search/touch code compatible with the integrated
-robot-state contract.
+The integrated robot has two intentional naming layers. The combined URDF/TF
+tree uses `front_piper_joint1..6`, `front_piper_flange_link`, and
+`front_camera_color_optical_frame`. Trystan's namespaced front MoveIt instance
+uses its front-only semantic model with raw `joint1..6` and `tcp_link`, and its
+trajectory bridge converts those raw trajectory names into commands for the
+front driver. The front driver already publishes raw feedback on
+`/front_piper/feedback/joint_states`, so the adapter is disabled by default;
+enable it only when that raw topic is absent and only prefixed `/joint_states`
+is available.
 
 This adapter handles feedback only. The trajectory action and control topic
 are provided by this package when `use_piper_motion_stack:=true`; otherwise
@@ -90,9 +96,13 @@ they must already be provided by another compatible front-PiPER controller:
 - `/front_piper/arm_controller/follow_joint_trajectory`
 - `/front_piper/control/joint_states`
 
-The marker/search nodes talk to the namespaced MoveIt instance through
-`move_group_namespace:=front_piper`, while their ROS services and HTTP API stay
-at the root namespace for OpenClaw.
+The marker/search nodes talk to the existing namespaced MoveIt instance through
+`move_group_namespace:=front_piper` and consume the combined
+`/robot_description` plus the matching integrated front SRDF. Planning uses
+`front_piper_joint1..6` and `front_piper_flange_link`; saved trajectory goals
+must use the same prefixed names. Perception uses the combined TF tree:
+`base_link -> front_piper_flange_link -> front_camera_color_optical_frame`.
+Their ROS services and HTTP API stay at the root namespace for OpenClaw.
 
 ## Reactive Marker Search
 

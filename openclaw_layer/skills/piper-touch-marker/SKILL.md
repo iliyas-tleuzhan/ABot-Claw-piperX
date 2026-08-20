@@ -5,7 +5,8 @@ description: Use the PiPER-X ROS 2 Agent Server for requests such as "search for
 
 # PiPER Touch Marker
 
-This is the short OpenClaw-facing skill for the current PiPER-X marker demo.
+This is the short OpenClaw-facing skill for the integrated dual-PiPER Bunker
+system's front-arm marker demo.
 For full robot details, use `abotclaw-piper-x-manipulation`.
 
 Default PiPER-X Agent Server:
@@ -16,6 +17,18 @@ http://127.0.0.1:8893
 
 The lower-level ROS 2 marker bridge remains on `http://127.0.0.1:8892`, but
 OpenClaw should call the Agent Server on `8893`.
+
+The front arm is the default and is selected with `arm: "front"`. The rear arm
+may be used for generic home/nav/previous trajectory commands with
+`arm: "rear"`, but marker search, approach, and touch require the front wrist
+camera and reject `arm: "rear"` clearly. Reuse Trystan's existing drivers,
+cameras, TF, and `/front_piper` MoveIt instance; do not launch duplicates.
+
+The active `/front_piper` MoveIt group uses the integrated prefixed joints
+`front_piper_joint1..6` and tip `front_piper_flange_link`. Perception uses
+`front_piper_flange_link` and `front_camera_color_optical_frame` in the
+combined live TF tree. Use the matching integrated front SRDF with the
+combined `/robot_description`; do not use the old raw standalone SRDF.
 
 ## Required Health Check
 
@@ -84,7 +97,11 @@ curl -sS -X POST http://127.0.0.1:8893/tools/touch-marker \
   -d '{"execute":true,"lease_id":"<LEASE_ID>","pre_clearance_m":0.05,"final_clearance_m":0.005,"retract_after":false,"retract_distance_m":0.05,"final_velocity_scaling":0.05,"return_home_after":false,"home_duration_s":6.0}'
 ```
 
-The touch planner targets the `tcp_link` contact point at the ArUco marker center using one MoveIt plan from the current robot state. The ROS 2 stack prefers elbow/wrist motion by keeping `joint1` near its current angle during planning.
+The touch planner targets the `front_piper_flange_link` contact point in the
+`/front_piper` MoveIt model at the ArUco marker center using one MoveIt plan
+from the current robot state. Perception uses the combined `base_link ->
+front_camera_color_optical_frame` TF chain. The ROS 2 stack prefers
+elbow/wrist motion by keeping `joint1` near its current angle during planning.
 
 Go home:
 

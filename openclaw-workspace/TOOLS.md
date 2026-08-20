@@ -90,7 +90,11 @@ Last heartbeat check: 2026-07-31 16:10 Asia/Hong_Kong.
 - Do not use `http://127.0.0.1:8888` or `robot_layer/arm_piper` for PiPER-X.
 - Physical execution requires the local API health field `execution_allowed: true`.
 - "Touch" is geometric only; there is no force-confirmed contact.
-- Startup uses ROS 2 Jazzy, `agx_arm_ros`, `arm_type:=piper_x`, `effector_type:=agx_gripper`, `fw_version:=v189`, MoveIt group `arm`, tip `tcp_link`, TCP offset `[0.0, 0.0, 0.1425, 0.0, 0.0, 0.0]`.
+- Integrated startup reuses Trystan's ROS 2 stack: front PiPER on `can2`, rear
+  PiPER on `can3`, Bunker on `can4`, front MoveIt namespace `/front_piper`,
+  group `arm`, tip `tcp_link`, and combined TF chain
+  `base_link -> front_piper_flange_link -> front_camera_color_optical_frame`.
+  Do not start duplicate drivers, cameras, robot-state publishers, or MoveIt.
 
 ### Cameras
 

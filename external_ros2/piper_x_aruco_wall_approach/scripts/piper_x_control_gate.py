@@ -19,6 +19,9 @@ class PiperXControlGate(Node):
         self.declare_parameter("gate_service_name", "control_enable")
         self.declare_parameter("idle_close_period_s", 0.5)
         self.declare_parameter("hold_open_after_active_s", 4.0)
+        self.declare_parameter("open_on_startup", True)
+        self.declare_parameter("close_on_startup", False)
+        self.declare_parameter("close_when_idle", False)
 
         self.status_topics = list(self.get_parameter("status_topics").value)
         self.gate_service_name = str(self.get_parameter("gate_service_name").value)
@@ -27,9 +30,11 @@ class PiperXControlGate(Node):
             float(self.get_parameter("hold_open_after_active_s").value),
             0.0,
         )
+        self.open_on_startup = bool(self.get_parameter("open_on_startup").value)
+        self.close_on_startup = bool(self.get_parameter("close_on_startup").value)
+        self.close_when_idle = bool(self.get_parameter("close_when_idle").value)
 
-        # ACCEPTED, EXECUTING, CANCELING. The gate must be open only while
-        # ros2_control is actively forwarding a trajectory to the AGX driver.
+        # ACCEPTED, EXECUTING, CANCELING.
         self._active_states = {1, 2, 3}
         self._topic_active = {topic: False for topic in self.status_topics}
         self._gate_open = None
@@ -45,12 +50,29 @@ class PiperXControlGate(Node):
                 10,
             )
 
-        self._startup_timer = self.create_timer(0.2, self._close_on_startup)
-        self.create_timer(max(idle_close_period_s, 0.1), self._close_when_idle)
+        if self.open_on_startup:
+            self._startup_timer = self.create_timer(0.2, self._open_on_startup)
+        elif self.close_on_startup:
+            self._startup_timer = self.create_timer(0.2, self._close_on_startup)
+        else:
+            self._startup_timer = None
+        if self.close_when_idle:
+            self.create_timer(max(idle_close_period_s, 0.1), self._close_when_idle)
         self.get_logger().info(
             "PiPER-X control gate watching "
-            f"{self.status_topics}; service={self.gate_service_name}"
+            f"{self.status_topics}; service={self.gate_service_name}; "
+            f"open_on_startup={self.open_on_startup}; "
+            f"close_on_startup={self.close_on_startup}; close_when_idle={self.close_when_idle}"
         )
+
+    def _open_on_startup(self):
+        if self._gate_client.wait_for_service(timeout_sec=0.0):
+            if not self._service_ready_logged:
+                self.get_logger().info("Control gate service ready; forcing gate open")
+                self._service_ready_logged = True
+            self._set_gate(True)
+            if self._startup_timer is not None:
+                self._startup_timer.cancel()
 
     def _close_on_startup(self):
         if self._gate_client.wait_for_service(timeout_sec=0.0):
@@ -58,7 +80,8 @@ class PiperXControlGate(Node):
                 self.get_logger().info("Control gate service ready; forcing gate closed")
                 self._service_ready_logged = True
             self._set_gate(False)
-            self._startup_timer.cancel()
+            if self._startup_timer is not None:
+                self._startup_timer.cancel()
 
     def _close_when_idle(self):
         if not any(self._topic_active.values()) and self.get_clock().now() >= self._hold_open_until:
@@ -74,7 +97,8 @@ class PiperXControlGate(Node):
             )
             self._set_gate(True)
         else:
-            self._close_when_idle()
+            if self.close_when_idle:
+                self._close_when_idle()
 
     def _set_gate(self, open_gate):
         if self._gate_open is open_gate:
