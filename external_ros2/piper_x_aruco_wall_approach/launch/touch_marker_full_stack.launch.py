@@ -176,7 +176,7 @@ def generate_launch_description():
             "home_pose_file",
             default_value=EnvironmentVariable(
                 "PIPER_X_HOME_POSE_FILE",
-                default_value="/ros2_ws/config/piper_x_home_pose.yaml",
+                default_value="/ros2_ws/config/piper_x_manipulation_pose.yaml",
             ),
         ),
         DeclareLaunchArgument(
