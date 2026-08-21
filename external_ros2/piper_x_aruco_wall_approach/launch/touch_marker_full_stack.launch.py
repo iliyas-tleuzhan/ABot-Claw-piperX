@@ -2,7 +2,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, SetEnvironmentVariable
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import EnvironmentVariable, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
@@ -78,7 +78,7 @@ def generate_launch_description():
             default_value="/front_camera/depth/color/points",
         ),
         DeclareLaunchArgument("marker_id", default_value="6"),
-        DeclareLaunchArgument("marker_size", default_value="0.03"),
+        DeclareLaunchArgument("marker_size", default_value="0.06"),
         DeclareLaunchArgument("api_port", default_value="8892"),
         DeclareLaunchArgument("api_host", default_value="127.0.0.1"),
         DeclareLaunchArgument("pre_clearance", default_value="0.05"),
@@ -167,27 +167,24 @@ def generate_launch_description():
         DeclareLaunchArgument("joint_state_timeout", default_value="2.5"),
         DeclareLaunchArgument(
             "home_pose_file",
-            default_value=PathJoinSubstitution([
-                package_share,
-                "config",
-                "piper_x_home_pose.yaml",
-            ]),
+            default_value=EnvironmentVariable(
+                "PIPER_X_HOME_POSE_FILE",
+                default_value="/ros2_ws/config/piper_x_home_pose.yaml",
+            ),
         ),
         DeclareLaunchArgument(
             "previous_pose_file",
-            default_value=PathJoinSubstitution([
-                package_share,
-                "config",
-                "piper_x_previous_pose.yaml",
-            ]),
+            default_value=EnvironmentVariable(
+                "PIPER_X_PREVIOUS_POSE_FILE",
+                default_value="/ros2_ws/config/piper_x_previous_pose.yaml",
+            ),
         ),
         DeclareLaunchArgument(
             "found_marker_pose_file",
-            default_value=PathJoinSubstitution([
-                package_share,
-                "config",
-                "piper_x_found_marker_pose.yaml",
-            ]),
+            default_value=EnvironmentVariable(
+                "PIPER_X_FOUND_MARKER_POSE_FILE",
+                default_value="/ros2_ws/config/piper_x_found_marker_pose.yaml",
+            ),
         ),
         SetEnvironmentVariable("PIPER_TOUCH_ALLOW_EXECUTION", execute_allowed),
         IncludeLaunchDescription(

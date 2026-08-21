@@ -29,7 +29,7 @@ workcell stack.
 - Wrist camera: Intel RealSense D435i depth camera
 - Point cloud: `/front_camera/depth/color/points`
 - ArUco pose: `/aruco_single/pose`
-- Marker: ID `6`, size `0.03 m`
+- Marker: ID `6`, size `0.06 m`
 - PiPER-X Agent Server: `http://127.0.0.1:8893`
 - Low-level marker bridge: `http://127.0.0.1:8892`
 - Bunker CAN: `can4`; do not move Bunker during PiPER-X marker search unless a separate Bunker controller is explicitly enabled.
@@ -90,17 +90,25 @@ required. Require:
 - `joint_state_available: true`
 - `execution_allowed: true` for physical execution
 
-`go home` means the neutral six-joint zero pose for the selected arm:
+The fresh-install default `go home` pose is:
 
 ```text
-[0, 0, 0, 0, 0, 0]
+[0, 0.36, 0.86, 0.56, 0, 0]
 ```
 
-This is different from `go nav pose`, which uses Trystan's parked/navigation
-pose.
+An operator-taught runtime home pose overrides this default. This is different
+from `go nav pose`, which uses Trystan's parked/navigation pose.
 
 For `save current pose as home` and `save current pose as previous`, require
 fresh joint state. These commands do not move the robot.
+
+To teach a new home pose, the operator may move the physical front arm with
+MoveIt/RViz2 teaching mode, wait for the live joint feedback to settle, and
+then save the pose. Saving is a feedback snapshot only: it must not acquire a
+motion lease or send a trajectory. The low-level bridge persists home at
+`/ros2_ws/config/piper_x_home_pose.yaml`, so do not ask the operator to save it
+again after an Agent Server restart. Teaching mode must be exited before
+executing `go home`.
 
 Physical `approach`, `touch`, and `go home` automatically save the current
 six-joint pose as `previous` before sending a trajectory. That gives the

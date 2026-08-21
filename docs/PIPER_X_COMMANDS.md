@@ -44,7 +44,7 @@ ros2 launch piper_x_aruco_wall_approach touch_marker_full_stack.launch.py \
   calibration_file:=/workspace/handeye/config/piper_x_d435i_eye_in_hand.json \
   point_cloud_topic:=/front_camera/depth/color/points \
   marker_id:=6 \
-  marker_size:=0.03 \
+  marker_size:=0.06 \
   can_port:=can2 \
   pub_rate:=80 \
   joint_state_timeout:=2.5 \
@@ -67,7 +67,7 @@ nohup ros2 launch piper_x_aruco_wall_approach touch_marker_full_stack.launch.py 
   calibration_file:=/workspace/handeye/config/piper_x_d435i_eye_in_hand.json \
   point_cloud_topic:=/front_camera/depth/color/points \
   marker_id:=6 \
-  marker_size:=0.03 \
+  marker_size:=0.06 \
   can_port:=can2 \
   pub_rate:=80 \
   joint_state_timeout:=2.5 \
@@ -252,13 +252,14 @@ curl -s -X POST http://127.0.0.1:8892/tools/piper/save-home \
 
 ### Go Home
 
-Default home for both arms is the neutral six-joint zero pose:
+Fresh-install default front-arm home is:
 
 ```text
-[0, 0, 0, 0, 0, 0]
+[0, 0.36, 0.86, 0.56, 0, 0]
 ```
 
-Use `go-nav-pose` for Trystan's parked/navigation pose.
+An operator-taught pose saved to `/ros2_ws/config/piper_x_home_pose.yaml`
+overrides this default. Use `go-nav-pose` for Trystan's parked/navigation pose.
 
 ```bash
 curl -s -X POST http://127.0.0.1:8892/tools/piper/go-home \

@@ -472,6 +472,15 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
 
     @staticmethod
     def _default_home_pose_file() -> str:
+        configured = os.environ.get("PIPER_X_HOME_POSE_FILE", "").strip()
+        if configured:
+            return configured
+        if Path("/ros2_ws").is_dir():
+            return "/ros2_ws/config/piper_x_home_pose.yaml"
+        return str(Path.home() / ".config" / "abotclaw" / "piper_x" / "piper_x_home_pose.yaml")
+
+    @staticmethod
+    def _packaged_home_pose_file() -> str:
         return str(
             Path(get_package_share_directory("piper_x_aruco_wall_approach"))
             / "config"
@@ -509,7 +518,12 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
 
     @classmethod
     def _load_home_pose(cls, path: str):
-        return cls._load_saved_pose(path, "home")
+        requested = Path(path).expanduser()
+        if requested.is_file():
+            return cls._load_saved_pose(str(requested), "home")
+        # The packaged pose is only a bootstrap fallback. New saves are
+        # written to the persistent runtime path and take precedence.
+        return cls._load_saved_pose(cls._packaged_home_pose_file(), "home")
 
     @classmethod
     def _try_load_saved_pose(cls, path: str, pose_name: str):
@@ -975,7 +989,7 @@ class FakeUnavailableAdapter(RosMarkerTaskAdapter):
             home_action_available=False,
             joint_state_available=False,
             configured_marker_id=6,
-            configured_marker_size_m=0.03,
+            configured_marker_size_m=0.06,
             execution_allowed=execution_allowed_from_env(),
             hardware_ready=False,
             hardware_fake=False,
@@ -1477,7 +1491,7 @@ def main() -> None:
     parser.add_argument("--marker-pose-topic", default="/aruco_single/pose")
     parser.add_argument("--point-cloud-topic", default="/front_camera/depth/color/points")
     parser.add_argument("--marker-id", type=int, default=6)
-    parser.add_argument("--marker-size-m", type=float, default=0.03)
+    parser.add_argument("--marker-size-m", type=float, default=0.06)
     parser.add_argument("--marker-timeout-s", type=float, default=1.0)
     parser.add_argument("--point-cloud-timeout-s", type=float, default=2.0)
     parser.add_argument("--home-pose-file", default=MarkerTaskBridge._default_home_pose_file())

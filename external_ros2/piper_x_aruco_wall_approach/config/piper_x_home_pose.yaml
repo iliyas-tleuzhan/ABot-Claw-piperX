@@ -1,6 +1,6 @@
 # Default home pose for front and rear PiPER-X arms.
-# This is the neutral six-joint zero pose; use nav-pose for Trystan's parked
-# navigation pose.
+# This is the default front-arm home pose. Runtime saves in /ros2_ws/config
+# override it after the operator teaches a different pose.
 pose_name: home
 captured_at_ros_time:
   sec: 0
@@ -27,9 +27,9 @@ joint_state:
     - gripper
   positions_rad:
     - 0.0
-    - 0.0
-    - 0.0
-    - 0.0
+    - 0.36
+    - 0.86
+    - 0.56
     - 0.0
     - 0.0
     - 0.0

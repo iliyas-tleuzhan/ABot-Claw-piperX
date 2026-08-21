@@ -157,7 +157,7 @@ ros2 launch piper_x_aruco_wall_approach touch_marker_full_stack.launch.py \
   control_topic:=/front_piper/control/joint_states \
   trajectory_action:=/front_piper/arm_controller/follow_joint_trajectory \
   marker_id:=6 \
-  marker_size:=0.03 \
+  marker_size:=0.06 \
   prefer_elbow_motion:=true \
   goal_orientation_tolerance:=0.35 \
   marker_timeout:=1.0 \
@@ -300,6 +300,27 @@ ros2 run piper_x_aruco_wall_approach piper_touch_marker_client.py previous --exe
 The previous pose is saved automatically before physical `approach`, `touch`,
 and `go-home` commands. If no previous pose file exists yet, call
 `save-previous` from a known safe pose before using `go-previous`.
+
+### Persistent home pose from MoveIt/RViz2
+
+The home pose is a six-joint snapshot read from the live integrated
+`/joint_states` feedback. To teach a new home pose, move the physical front
+arm with MoveIt/RViz2, wait until the displayed joints stop changing, then run:
+
+```bash
+ros2 run piper_x_aruco_wall_approach piper_touch_marker_client.py save-home
+```
+
+The pose is saved at `/ros2_ws/config/piper_x_home_pose.yaml` by default, not
+inside the installed ROS package. It therefore survives node restarts and
+workspace rebuilds. The checked-in package pose is used only as a bootstrap if
+the runtime file does not exist. Override the location with
+`PIPER_X_HOME_POSE_FILE` when the workspace uses a different persistent mount.
+
+Teaching mode is compatible with this workflow: `save-home` only records fresh
+joint feedback and does not send a trajectory or require the arm to leave
+teaching mode. Exit teaching mode before running `go-home`, since that command
+must send a trajectory through the physical front-arm controller.
 
 Equivalent HTTP:
 
