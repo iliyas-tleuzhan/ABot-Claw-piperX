@@ -46,23 +46,40 @@ a Lark message is a request, not proof that the robot is ready.
 
 ## Commands
 
-Run from the repository/workspace root:
+For a simple Bunker landmark request, use the direct ROS 2 topic command below.
+Do not run the Python helper, run a full health preflight, or require Nav2
+discovery before sending it. `ros2 topic pub --once` waits for a subscriber and
+reports if the command could not be delivered.
 
 ```bash
-python3 openclaw_layer/skills/abotclaw-bunker-navigation/scripts/bunker_navigation_cycle.py health
-python3 openclaw_layer/skills/abotclaw-bunker-navigation/scripts/bunker_navigation_cycle.py go-marker door
-python3 openclaw_layer/skills/abotclaw-bunker-navigation/scripts/bunker_navigation_cycle.py go-marker home
-python3 openclaw_layer/skills/abotclaw-bunker-navigation/scripts/bunker_navigation_cycle.py go-home
+source /opt/ros/humble/setup.bash
+source /ros2_ws/install/setup.bash
+export ROS_DOMAIN_ID=173
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+export ROS_LOCALHOST_ONLY=1
+
+# Bunker to the door landmark
+ros2 topic pub --once /landmark_navigator/go_marker \
+  std_msgs/msg/String "{data: door}"
+
+# Bunker to the home landmark
+ros2 topic pub --once /landmark_navigator/go_marker \
+  std_msgs/msg/String "{data: home}"
+```
+
+These are the authoritative commands for `go to door with the Bunker` and
+`go home with the Bunker`. Do not substitute the PiPER `/tools/go-home` API or
+the `/landmark_navigator/go_home` service for these named-landmark requests.
+
+Use the Python helper only for diagnostics or the complete coordinated cycle:
+
+```bash
 python3 openclaw_layer/skills/abotclaw-bunker-navigation/scripts/bunker_navigation_cycle.py cycle
 ```
 
-`health` is read-only. For a simple landmark command, use `command_ready`: the
-landmark navigator must be visible and subscribed to
-`/landmark_navigator/go_marker`. Do not block `go-marker door` or
-`go-marker home` on Nav2 action-status, arrival, or manipulation topics. The
-additional `nav2_stack_ready` and `ready_for_cycle` fields are diagnostics for
-the complete navigation/manipulation `cycle`, not prerequisites for publishing
-a named landmark command.
+The helper's `health` output is diagnostic only. Its `command_ready`, Nav2,
+arrival, and manipulation fields must never block the two direct commands
+above.
 
 ## Cycle behavior
 
@@ -109,10 +126,9 @@ door -> home: navigation_direction=reverse, active_camera=rear_camera
 - Never publish `/cmd_vel`, `/cmd_vel_autonomy`, or `/nav2/cmd_vel_raw`.
 - Never send direct Bunker CAN or PiPER joint/MoveIt commands.
 - Never send a second manipulation request for an active door arrival.
-- Require only a fresh `command_ready` result before publishing a named
-  landmark command. Do not reject `go-marker door` or `go-marker home` merely
-  because Nav2 action status, manipulation progress, or arrival handoff topics
-  are unavailable.
+- For direct Bunker landmark commands, execute the exact `ros2 topic pub
+  --once` command and use its result. Do not add a Python health preflight or
+  block on optional Nav2/cycle status fields.
 - Stop on navigation failure, manipulation failure, safety stop, or missing
   arrival confirmation.
 

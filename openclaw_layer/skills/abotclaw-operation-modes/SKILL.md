@@ -97,7 +97,7 @@ Treat these as mode-aware requests:
 
 | User request | Mode behavior |
 | --- | --- |
-| `go to the door`, `navigate home`, `drive to ...` | Require `NAVIGATION`; reject if an arm is moving. |
+| `go to the door with the Bunker`, `go home with the Bunker`, `navigate home`, `drive to ...` | Execute the direct `/landmark_navigator/go_marker` topic command. Do not add Python health blockers. |
 | `stop navigation`, `stop driving` | Stop navigation intent, keep Nav2 alive, then prepare `MANIPULATION` only after the base is stationary. |
 | `touch the marker`, `search for the marker`, `go home`, `move the arm` | Require `MANIPULATION`; never execute while `NAVIGATION` is active. |
 | `go nav pose`, `park the arms`, `prepare for navigation` | Complete the arm parking and map-resume transition before allowing navigation. |
