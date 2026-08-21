@@ -122,8 +122,8 @@ public:
     joint4_reset_rad_ = declare_parameter<double>("joint4_reset_rad", 0.0);
     auto_horizontal_offset_rad_ = declare_parameter<double>("auto_horizontal_offset_rad", 2.0);
     auto_vertical_offset_rad_ = declare_parameter<double>("auto_vertical_offset_rad", 0.45);
-    vertical_lift_joint2_rad_ = declare_parameter<double>("vertical_lift_joint2_rad", 0.20);
-    vertical_lift_joint3_rad_ = declare_parameter<double>("vertical_lift_joint3_rad", 0.20);
+    vertical_lift_joint2_rad_ = declare_parameter<double>("vertical_lift_joint2_rad", 0.05);
+    vertical_lift_joint3_rad_ = declare_parameter<double>("vertical_lift_joint3_rad", 0.08);
     auto_sequence_ = declare_parameter<std::vector<std::string>>(
       "auto_sequence",
       std::vector<std::string>{
@@ -266,10 +266,10 @@ private:
       auto_vertical_offset_rad_ = 0.45;
     }
     if (!std::isfinite(vertical_lift_joint2_rad_) || vertical_lift_joint2_rad_ <= 0.0) {
-      vertical_lift_joint2_rad_ = 0.20;
+      vertical_lift_joint2_rad_ = 0.05;
     }
     if (!std::isfinite(vertical_lift_joint3_rad_) || vertical_lift_joint3_rad_ <= 0.0) {
-      vertical_lift_joint3_rad_ = 0.20;
+      vertical_lift_joint3_rad_ = 0.08;
     }
 
     for (auto & [direction, delta] : direction_deltas_) {
@@ -1050,13 +1050,13 @@ private:
       return false;
     }
     const double horizontal = std::abs(auto_horizontal_offset_rad_);
-    const double lift_j2 = std::abs(vertical_lift_joint2_rad_);
-    const double lift_j3 = -std::abs(vertical_lift_joint3_rad_);
+    // The integrated front-arm model raises with negative J2 and positive J3.
+    // Keep both increments small; J4 compensates their net pitch change.
+    const double lift_j2 = -std::abs(vertical_lift_joint2_rad_);
+    const double lift_j3 = std::abs(vertical_lift_joint3_rad_);
     const double original_j2 = std::clamp((*initial)[1], joint2_bounds->first, joint2_bounds->second);
     const double original_j3 = std::clamp((*initial)[2], joint3_bounds->first, joint3_bounds->second);
     const double original_j4 = std::clamp((*initial)[3], joint4_bounds->first, joint4_bounds->second);
-    const double look_up = std::clamp(
-      original_j4 - auto_vertical_offset_rad_, joint4_bounds->first, joint4_bounds->second);
 
     std::vector<double> sectors{
       std::clamp((*initial)[0], joint1_bounds->first, joint1_bounds->second),
@@ -1069,15 +1069,20 @@ private:
     while (rclcpp::ok() && (max_steps_ == 0 || steps_used < max_steps_)) {
       for (std::size_t sector_index = 0; sector_index < sectors.size(); ++sector_index) {
         const double sector = sectors[sector_index];
-        double level_j2 = original_j2;
-        double level_j3 = original_j3;
-        while (rclcpp::ok() && (max_steps_ == 0 || steps_used < max_steps_)) {
-          const std::vector<std::pair<std::string, std::vector<double>>> views = {
-            {"sector_" + std::to_string(sector_index) + "_right", {sector - horizontal, level_j2, level_j3, original_j4, (*initial)[4], (*initial)[5]}},
-            {"sector_" + std::to_string(sector_index) + "_left", {sector + horizontal, level_j2, level_j3, original_j4, (*initial)[4], (*initial)[5]}},
-            {"sector_" + std::to_string(sector_index) + "_up", {sector, level_j2, level_j3, look_up, (*initial)[4], (*initial)[5]}},
-            {"sector_" + std::to_string(sector_index) + "_up_left", {sector + horizontal, level_j2, level_j3, look_up, (*initial)[4], (*initial)[5]}},
-            {"sector_" + std::to_string(sector_index) + "_j4_down", {sector, level_j2, level_j3, original_j4, (*initial)[4], (*initial)[5]}}};
+      double level_j2 = original_j2;
+      double level_j3 = original_j3;
+      while (rclcpp::ok() && (max_steps_ == 0 || steps_used < max_steps_)) {
+        const double level_j4 = std::clamp(
+          original_j4 - ((level_j2 - original_j2) + (level_j3 - original_j3)),
+          joint4_bounds->first, joint4_bounds->second);
+        const double look_up = std::clamp(
+          level_j4 - auto_vertical_offset_rad_, joint4_bounds->first, joint4_bounds->second);
+        const std::vector<std::pair<std::string, std::vector<double>>> views = {
+          {"sector_" + std::to_string(sector_index) + "_right", {sector - horizontal, level_j2, level_j3, level_j4, (*initial)[4], (*initial)[5]}},
+          {"sector_" + std::to_string(sector_index) + "_left", {sector + horizontal, level_j2, level_j3, level_j4, (*initial)[4], (*initial)[5]}},
+          {"sector_" + std::to_string(sector_index) + "_up", {sector, level_j2, level_j3, look_up, (*initial)[4], (*initial)[5]}},
+          {"sector_" + std::to_string(sector_index) + "_up_left", {sector + horizontal, level_j2, level_j3, look_up, (*initial)[4], (*initial)[5]}},
+          {"sector_" + std::to_string(sector_index) + "_j4_down", {sector, level_j2, level_j3, level_j4, (*initial)[4], (*initial)[5]}}};
           for (const auto & [label, unclamped] : views) {
             std::vector<double> target = unclamped;
             target[0] = std::clamp(target[0], joint1_bounds->first, joint1_bounds->second);
@@ -1097,8 +1102,8 @@ private:
           }
           const double next_j2 = level_j2 + lift_j2;
           const double next_j3 = level_j3 + lift_j3;
-          if (next_j2 > joint2_bounds->second - min_feedback_motion_rad_ ||
-            next_j3 < joint3_bounds->first + min_feedback_motion_rad_)
+          if (next_j2 < joint2_bounds->first + min_feedback_motion_rad_ ||
+            next_j3 > joint3_bounds->second - min_feedback_motion_rad_)
           {
             break;
           }
@@ -1108,7 +1113,9 @@ private:
           lift_target[0] = sector;
           lift_target[1] = level_j2;
           lift_target[2] = level_j3;
-          lift_target[3] = original_j4;
+          lift_target[3] = std::clamp(
+            original_j4 - ((level_j2 - original_j2) + (level_j3 - original_j3)),
+            joint4_bounds->first, joint4_bounds->second);
           bool motion_ok = true;
           if (move_target_and_allow_skips(lift_target, "sector_" + std::to_string(sector_index) + "_lift", steps_used, found_at_pose, stage, message, motion_ok)) {
             return true;

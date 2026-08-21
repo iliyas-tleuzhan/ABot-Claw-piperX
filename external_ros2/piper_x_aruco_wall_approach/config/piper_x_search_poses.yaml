@@ -43,8 +43,11 @@ search_marker_node:
     # Joint4 only selects the upper/lower viewing levels.
     auto_horizontal_offset_rad: 0.55
     auto_vertical_offset_rad: 0.35
-    vertical_lift_joint2_rad: 0.20
-    vertical_lift_joint3_rad: 0.20
+    # Integrated front-arm lift direction: J2 negative, J3 positive.
+    # Small unequal increments avoid the previous oversized/opposite motion;
+    # the node uses their net pitch change to compensate J4.
+    vertical_lift_joint2_rad: 0.05
+    vertical_lift_joint3_rad: 0.08
 
     # These deltas are used by one-step search commands. Full auto search uses
     # the absolute sequence below, so joint1 actually traverses both sides

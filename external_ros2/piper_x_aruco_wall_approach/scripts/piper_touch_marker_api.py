@@ -1152,6 +1152,46 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
         if not health_snapshot.joint_state_available:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="fresh joint state unavailable")
 
+    def prepare_manipulation_pose(arm: str, execute: bool) -> Optional[Dict[str, Any]]:
+        """Park the selected arm in its manipulation pose before any task motion."""
+        if not execute:
+            return None
+        adapter.emit_progress(
+            "manipulation_pose_starting",
+            status="running",
+            task="manipulation_pose",
+            arm=arm,
+            finished=False,
+        )
+        result = adapter.go_home(HomeRequest(execute=True, arm=arm, duration_s=6.0))
+        if not result.get("success", False):
+            adapter.emit_progress(
+                "manipulation_pose_ended",
+                status="failed",
+                task="manipulation_pose",
+                arm=arm,
+                success=False,
+                finished=True,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "success": False,
+                    "stage": "manipulation_pose",
+                    "message": result.get("message", "failed to reach manipulation pose"),
+                    "manipulation_pose": result,
+                },
+            )
+        adapter.emit_progress(
+            "manipulation_pose_ended",
+            status="succeeded",
+            task="manipulation_pose",
+            arm=arm,
+            success=True,
+            finished=True,
+        )
+        return result
+
     def require_approach_readiness(health_snapshot: HealthSnapshot) -> None:
         if not health_snapshot.marker_task_service_available:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="marker task service unavailable")
@@ -1198,6 +1238,8 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="another PiPER marker task is active")
         try:
             arm_enable_result = ensure_request_arm_enabled(request.arm) if request.execute else None
+            manipulation_pose_result = prepare_manipulation_pose(request.arm, request.execute)
+            health_snapshot = adapter.health()
             search_result = None
             if not health_snapshot.marker_pose_available:
                 require_search_readiness(health_snapshot)
@@ -1225,6 +1267,8 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
                 result["search_result"] = search_result
             if arm_enable_result is not None:
                 result["arm_enable"] = arm_enable_result
+            if manipulation_pose_result is not None:
+                result["manipulation_pose"] = manipulation_pose_result
             if previous_saved is not None:
                 result["previous_pose_saved_before_motion"] = previous_saved
             adapter.emit_progress(
@@ -1286,7 +1330,19 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
         try:
             if request.execute:
                 ensure_request_arm_enabled(request.arm)
+            require_search_readiness(adapter.health())
+            manipulation_pose_result = prepare_manipulation_pose(request.arm, request.execute)
+            if manipulation_pose_result is not None:
+                adapter.emit_progress(
+                    "manipulation_starting",
+                    status="running",
+                    task="search",
+                    arm=request.arm,
+                    finished=False,
+                )
             result = adapter.search_marker(request)
+            if manipulation_pose_result is not None:
+                result["manipulation_pose"] = manipulation_pose_result
             if result.get("success", False) and result.get("marker_found", False):
                 found_marker_saved = adapter.save_found_marker()
                 result["found_marker_pose_saved"] = found_marker_saved
