@@ -1,6 +1,6 @@
 ---
 name: abotclaw-piper-x-manipulation
-description: Route PiPER-X marker, home-pose, previous-pose, found-marker-pose, nav-pose, search, and gripper commands through the PiPER-X Agent Server on 127.0.0.1:8893. Use when the user asks the PiPER-X arm to search for the marker, look for the marker, find the marker, approach/touch ArUco marker 6, press the marked location, open the door, activate the door button, press the door button, trigger the door sensor, go home, go back to the previous pose, go to nav pose, move to the found marker pose, save the current pose as home or previous, open the gripper, or close the gripper.
+description: Route PiPER-X marker, manipulation-pose, previous-pose, found-marker-pose, nav-pose, search, and gripper commands through the PiPER-X Agent Server on 127.0.0.1:8893.
 ---
 
 # AbotClaw PiPER-X Manipulation
@@ -144,14 +144,14 @@ readiness are not required. Require:
 
 ## Reactive Marker Search
 
-The old 3x3 hardcoded search-pose grid is retired. Full marker search is a
-fast robot-layer camera sequence, not a language-model loop. Joint1 now does
-the main horizontal coverage; joint4 only selects the upper/lower viewing
-levels. The default absolute search order is:
+Full marker search is continuous: ArUco detection runs while MoveIt moves. At
+each height scan right/left, tilt up with joint4, scan up-left, return joint4
+down, then lift with coupled joints 2 and 3. Repeat this through current, +90,
+maximum positive, -90, maximum negative, and current joint1 sectors. The
+default `max_steps: 0` continues until found or a physical/planning failure.
 
 ```text
-current -> right -> left -> up -> up_right -> up_left -> center
-        -> down -> down_right -> down_left
+right -> left -> joint4_up -> joint4_up_left -> joint4_down -> joint2/joint3_lift
 ```
 
 The horizontal sectors use a wide bounded joint1 offset so the camera can look

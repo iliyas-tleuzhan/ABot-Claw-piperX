@@ -60,12 +60,14 @@ MANIPULATION --manipulation complete--> NAVIGATION
 
 ### Navigation to manipulation
 
-1. Confirm Nav2 has reached its goal or has been explicitly stopped.
+1. Emit `navigation ended` only after `/landmark_navigator/arrived` or the
+   equivalent successful Nav2 result is received. A sent goal is not arrival.
 2. Confirm there is no active base goal and the Bunker is stationary.
 3. Confirm both arms are no longer needed for navigation.
 4. Pause map updates using the supported integrated interface while retaining
    the current map and localization state.
-5. Move both PiPER arms to their verified `home` poses. This is the
+5. Emit `manipulation starting`, pause map updates without deleting the map,
+   and move both PiPER arms to their verified `manipulation pose`. This is the
    manipulation-ready pose and is distinct from `nav pose`.
 6. Confirm fresh joint feedback for both home poses and confirm that no arm
    trajectory remains active.
@@ -78,7 +80,7 @@ start manipulation merely because a goal was sent.
 
 ### Manipulation to navigation
 
-1. Finish the manipulation action and confirm it is no longer moving either arm.
+1. Finish the manipulation action, emit `manipulation ended`, and confirm it is no longer moving either arm.
 2. Move both PiPER arms to their verified navigation poses using the PiPER
    `go nav pose` operation. For dual-arm navigation, both arms must be parked.
 3. Confirm fresh feedback for the parked arm poses and confirm no arm trajectory
@@ -121,6 +123,11 @@ rear_arm_at_nav_pose: true | false | unknown
 Never infer `map_updates=paused` just because the Bunker is stationary. Never
 infer `front_arm_at_nav_pose=true` from a command response without fresh joint
 feedback.
+
+While a command is running, relay progress events such as `checking marker`,
+`search step started`, `navigation ended`, `manipulation starting`, and
+`manipulation ended`. Every tool result must expose `success` and `finished`;
+never start a second motion while `finished=false`.
 
 When a transition cannot be verified, report the exact missing state and do not
 send the next physical command. In particular, do not claim that the map was

@@ -1,6 +1,6 @@
 ---
 name: abotclaw-piper-x-manipulation
-description: Route PiPER-X marker, home-pose, previous-pose, found-marker-pose, nav-pose, search, and gripper commands through the PiPER-X Agent Server on 127.0.0.1:8893. Use when the user asks the PiPER-X arm to search for the marker, look for the marker, find the marker, approach/touch ArUco marker 6, press the marked location, open the door, activate the door button, press the door button, trigger the door sensor, go home, go back to the previous pose, go to nav pose, move to the found marker pose, save the current pose as home or previous, open the gripper, or close the gripper.
+description: Route PiPER-X marker, manipulation-pose, previous-pose, found-marker-pose, nav-pose, search, and gripper commands through the PiPER-X Agent Server on 127.0.0.1:8893.
 ---
 
 # AbotClaw PiPER-X Manipulation
@@ -69,10 +69,11 @@ teaching, gripper, and arbitrary MoveIt motion requests.
 
 After navigation reaches its goal or is explicitly stopped, the mode coordinator
 must first pause map updates without deleting the existing map, move both arms to
-their verified `home` poses, and confirm fresh joint feedback. Only then may this
+their verified `manipulation pose`, and confirm fresh joint feedback. Only then may this
 skill execute manipulation. After manipulation, both arms must reach `nav pose`
 and report fresh feedback before map updates are resumed and navigation is
-allowed again. A `home` pose is not a `nav pose`.
+allowed again. A `manipulation pose` is not a `nav pose`; legacy `go-home` is
+an alias for the manipulation pose, not the Bunker navigation-home landmark.
 
 Always call health first:
 
@@ -102,23 +103,23 @@ required. Require:
 - `joint_state_available: true`
 - `execution_allowed: true` for physical execution
 
-The fresh-install default `go home` pose is:
+The fresh-install default `go manipulation pose` is:
 
 ```text
 [0, 0.36, -0.86, 0.56, 0, 0]
 ```
 
-An operator-taught runtime home pose overrides this default. This is different
+An operator-taught runtime manipulation pose overrides this default. This is different
 from `go nav pose`, which uses Trystan's parked/navigation pose.
 
-For `save current pose as home` and `save current pose as previous`, require
+For `save current pose as manipulation pose` and `save current pose as previous`, require
 fresh joint state. These commands do not move the robot.
 
-To teach a new home pose, the operator may move the physical front arm with
+To teach a new manipulation pose, the operator may move the physical front arm with
 MoveIt/RViz2 teaching mode, wait for the live joint feedback to settle, and
 then save the pose. Saving is a feedback snapshot only: it must not acquire a
-motion lease or send a trajectory. The low-level bridge persists home at
-`/ros2_ws/config/piper_x_home_pose.yaml`, so do not ask the operator to save it
+motion lease or send a trajectory. The low-level bridge persists the pose at
+`/ros2_ws/config/piper_x_manipulation_pose.yaml`, so do not ask the operator to save it
 again after an Agent Server restart. Teaching mode must be exited before
 executing `go home`.
 
@@ -142,14 +143,17 @@ readiness are not required. Require:
 
 ## Reactive Marker Search
 
-The old 3x3 hardcoded search-pose grid is retired. Full marker search is a
-fast robot-layer camera sequence, not a language-model loop. Joint1 now does
-the main horizontal coverage; joint4 only selects the upper/lower viewing
-levels. The default absolute search order is:
+Full marker search is a continuous robot-layer sequence, not a language-model
+loop. ArUco detection runs continuously while MoveIt is moving. At each height
+the arm looks right, left, up with joint4, up-left, returns joint4 down, then
+raises the coupled joint2/joint3 pair while preserving the horizontal wrist
+pose. It repeats that height sweep through joint1 sectors: current, +90 degrees,
+maximum positive, -90 degrees, maximum negative, and current again. It cycles
+until marker 6 is confirmed, a physical/planning error occurs, or an explicit
+operator limit is supplied. Default `max_steps: 0` means unlimited.
 
 ```text
-current -> right -> left -> up -> up_right -> up_left -> center
-        -> down -> down_right -> down_left
+right -> left -> joint4_up -> joint4_up_left -> joint4_down -> joint2/joint3_lift
 ```
 
 The horizontal sectors use a wide bounded joint1 offset so the camera can look
@@ -163,10 +167,14 @@ Use this loop when marker 6 is not visible:
 2. If `marker_visible: true`, stop searching and call `touch-marker` or
    `approach-marker`.
 3. If marker is hidden, acquire a lease and call `/tools/search-marker` with
-   `direction:"auto"` so the robot layer runs the full joint-limit sweep.
+   `direction:"auto"` so the robot layer runs the continuous height/sector sweep.
 4. Re-check after the search returns.
 5. Stop immediately when marker 6 is found.
-6. If the full sweep finishes without a marker, report `marker_not_found`.
+6. Report every response's `success` and `finished` fields. `finished:false`
+   means the task is still active; do not issue a second motion command. The
+   `/manipulation_task/progress` topic emits `manipulation_starting` and
+   `manipulation_ended` events. Relay those events to the user while the
+   command runs.
 
 Example one-step command:
 
@@ -224,12 +232,13 @@ python3 robot_layer/arm_piper_x/agent_server/run_piper_x_agent_task.py \
   --return-home-after
 ```
 
-For "go home", "front arm go home", or "rear arm go home":
+For "go manipulation pose", "prepare manipulation", or legacy "go home" for
+the arm:
 
 ```bash
 cd /home/dase-hw101/ABot-Claw &&
 python3 robot_layer/arm_piper_x/agent_server/run_piper_x_agent_task.py \
-  home \
+  manipulation-pose \
   --arm front \
   --execute
 ```
@@ -271,12 +280,12 @@ python3 robot_layer/arm_piper_x/agent_server/run_piper_x_agent_task.py \
   --execute
 ```
 
-For "save current pose as home" or "remember current pose as home":
+For "save current pose as manipulation pose" or legacy "save current pose as home":
 
 ```bash
 cd /home/dase-hw101/ABot-Claw &&
 python3 robot_layer/arm_piper_x/agent_server/run_piper_x_agent_task.py \
-  save-home
+  save-manipulation-pose
 ```
 
 For "save current pose as previous" or "remember current pose as previous":

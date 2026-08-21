@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import json
 import math
 import os
 import threading
@@ -15,10 +16,12 @@ from ament_index_python.packages import get_package_share_directory
 from builtin_interfaces.msg import Duration
 from control_msgs.action import FollowJointTrajectory
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from rclpy.action import ActionClient
 from rclpy.node import Node
 from sensor_msgs.msg import JointState, PointCloud2
+from std_msgs.msg import String
 from geometry_msgs.msg import PoseStamped
 from std_srvs.srv import SetBool
 from trajectory_msgs.msg import JointTrajectoryPoint
@@ -121,7 +124,7 @@ class HomeRequest(BaseModel):
 
 
 class SaveHomeRequest(BaseModel):
-    pose_name: str = Field(default="home")
+    pose_name: str = Field(default="manipulation_pose")
 
 
 @dataclass
@@ -214,6 +217,9 @@ class HealthSnapshot:
 
 
 class RosMarkerTaskAdapter:
+    def emit_progress(self, event: str, **fields: Any) -> None:
+        return None
+
     def health(self) -> HealthSnapshot:
         raise NotImplementedError
 
@@ -279,6 +285,7 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         self.trajectory_action = trajectory_action
         self.enable_service = enable_service
         self.command_joint_prefix = str(command_joint_prefix or "front_piper_")
+        self._progress_publisher = self.create_publisher(String, "/manipulation_task/progress", 10)
         self.controller_manager_service = (
             controller_manager_service
             or controller_manager_service_from_action(self.trajectory_action)
@@ -336,6 +343,10 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
                     lambda msg, selected_arm=arm: self._arm_joint_state_callback(selected_arm, msg),
                     10,
                 )
+
+    def emit_progress(self, event: str, **fields: Any) -> None:
+        payload = {"event": event, "status": fields.pop("status", "running"), **fields}
+        self._progress_publisher.publish(String(data=json.dumps(payload, separators=(",", ":"))))
 
     def _client_for_arm(self, arm: str):
         selected = normalize_arm(arm)
@@ -472,19 +483,21 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
 
     @staticmethod
     def _default_home_pose_file() -> str:
-        configured = os.environ.get("PIPER_X_HOME_POSE_FILE", "").strip()
+        configured = os.environ.get("PIPER_X_MANIPULATION_POSE_FILE", "").strip()
+        if not configured:
+            configured = os.environ.get("PIPER_X_HOME_POSE_FILE", "").strip()
         if configured:
             return configured
         if Path("/ros2_ws").is_dir():
-            return "/ros2_ws/config/piper_x_home_pose.yaml"
-        return str(Path.home() / ".config" / "abotclaw" / "piper_x" / "piper_x_home_pose.yaml")
+            return "/ros2_ws/config/piper_x_manipulation_pose.yaml"
+        return str(Path.home() / ".config" / "abotclaw" / "piper_x" / "piper_x_manipulation_pose.yaml")
 
     @staticmethod
     def _packaged_home_pose_file() -> str:
         return str(
             Path(get_package_share_directory("piper_x_aruco_wall_approach"))
             / "config"
-            / "piper_x_home_pose.yaml"
+            / "piper_x_manipulation_pose.yaml"
         )
 
     @staticmethod
@@ -500,7 +513,8 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         with open(path, "r", encoding="utf-8") as file:
             data = yaml.safe_load(file)
         saved_pose_name = data.get("pose_name")
-        if saved_pose_name != pose_name:
+        accepted_pose_names = {"home", "manipulation_pose"} if pose_name in {"home", "manipulation_pose"} else {pose_name}
+        if saved_pose_name not in accepted_pose_names:
             raise ValueError(f"saved pose file {path} has pose_name={saved_pose_name!r}, expected {pose_name!r}")
         joint_state = data.get("joint_state", {})
         names = list(joint_state.get("names", []))
@@ -523,7 +537,10 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
             return cls._load_saved_pose(str(requested), "home")
         # The packaged pose is only a bootstrap fallback. New saves are
         # written to the persistent runtime path and take precedence.
-        return cls._load_saved_pose(cls._packaged_home_pose_file(), "home")
+        try:
+            return cls._load_saved_pose(cls._packaged_home_pose_file(), "manipulation_pose")
+        except ValueError:
+            return cls._load_saved_pose(cls._packaged_home_pose_file(), "home")
 
     @classmethod
     def _try_load_saved_pose(cls, path: str, pose_name: str):
@@ -855,7 +872,7 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         return values
 
     def go_home(self, request: HomeRequest) -> Dict[str, Any]:
-        return self._execute_saved_joint_pose("home", self.home_joint_names, self.home_positions, request)
+        return self._execute_saved_joint_pose("manipulation_pose", self.home_joint_names, self.home_positions, request)
 
     def go_previous(self, request: HomeRequest) -> Dict[str, Any]:
         if self.previous_joint_names is None or self.previous_positions is None:
@@ -976,11 +993,11 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         }
 
     def save_home(self, request: SaveHomeRequest) -> Dict[str, Any]:
-        if request.pose_name != "home":
-            raise ValueError("only pose_name='home' is supported")
+        if request.pose_name not in {"home", "manipulation_pose"}:
+            raise ValueError("pose_name must be 'manipulation_pose' (legacy alias: 'home')")
         result = self._save_current_pose(
             self.home_pose_file,
-            "home",
+            "manipulation_pose",
             "piper_touch_marker_api_save_home",
         )
         self.home_joint_names = result["joint_names"]
@@ -1060,6 +1077,21 @@ class FakeUnavailableAdapter(RosMarkerTaskAdapter):
 def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -> FastAPI:
     app = FastAPI(title="PiPER-X Touch Marker API", version="0.1.0")
     command_lock = threading.Lock()
+
+    @app.middleware("http")
+    async def add_command_completion_fields(request: Request, call_next):
+        response = await call_next(request)
+        if not request.url.path.startswith("/tools/"):
+            return response
+        body = b"".join([chunk async for chunk in response.body_iterator])
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return response
+        if isinstance(payload, dict):
+            payload.setdefault("success", response.status_code < 400)
+            payload.setdefault("finished", response.status_code >= 400 or bool(payload.get("success")))
+        return JSONResponse(status_code=response.status_code, content=payload)
 
     def validate_request(mode: str, request: MarkerTaskRequest) -> None:
         try:
@@ -1150,6 +1182,7 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
 
     def run_endpoint(mode: str, request: MarkerTaskRequest) -> Dict[str, Any]:
         validate_request(mode, request)
+        adapter.emit_progress("manipulation_starting", status="running", task=mode, arm=request.arm, finished=False)
         health_snapshot = adapter.health()
         if request.execute and not health_snapshot.execution_allowed:
             raise HTTPException(
@@ -1189,6 +1222,14 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
                 result["arm_enable"] = arm_enable_result
             if previous_saved is not None:
                 result["previous_pose_saved_before_motion"] = previous_saved
+            adapter.emit_progress(
+                "manipulation_ended",
+                status="succeeded" if result.get("success", False) else "failed",
+                task=mode,
+                arm=request.arm,
+                success=bool(result.get("success", False)),
+                finished=True,
+            )
             if result.get("success", False) and request.execute and request.return_home_after:
                 home_result = adapter.go_home(HomeRequest(execute=True, arm=request.arm, duration_s=request.home_duration_s))
                 result["return_home_after"] = home_result
@@ -1234,6 +1275,7 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
                 detail="physical execution is disabled; set PIPER_TOUCH_ALLOW_EXECUTION=1",
             )
         require_search_readiness(health_snapshot)
+        adapter.emit_progress("manipulation_starting", status="running", task="search", arm=request.arm, finished=False)
         if not command_lock.acquire(blocking=False):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="another PiPER marker task is active")
         try:
@@ -1256,6 +1298,14 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=detail) from exc
         finally:
             command_lock.release()
+        adapter.emit_progress(
+            "manipulation_ended",
+            status="succeeded" if result.get("success", False) else "failed",
+            task="search",
+            arm=request.arm,
+            success=bool(result.get("success", False)),
+            finished=True,
+        )
         if (
             not result.get("success", False)
             and result.get("stage") not in {"search_complete", "marker_not_found"}
@@ -1264,8 +1314,8 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
         return result
 
     def run_save_home_endpoint(request: SaveHomeRequest) -> Dict[str, Any]:
-        if request.pose_name != "home":
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="only pose_name='home' is supported")
+        if request.pose_name not in {"home", "manipulation_pose"}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="pose_name must be 'manipulation_pose' (legacy alias: 'home')")
         health_snapshot = adapter.health()
         if not health_snapshot.joint_state_available:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="fresh joint state unavailable")
@@ -1462,6 +1512,15 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
     ) -> Dict[str, Any]:
         return run_home_endpoint(request)
 
+    @app.post("/tools/piper/go-manipulation-pose")
+    def go_manipulation_pose(
+        request: HomeRequest,
+        _: None = Depends(require_auth),
+    ) -> Dict[str, Any]:
+        result = run_home_endpoint(request)
+        result["pose"] = "manipulation_pose"
+        return result
+
     @app.post("/tools/piper/go-previous")
     def go_previous(
         request: HomeRequest,
@@ -1489,6 +1548,15 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
         _: None = Depends(require_auth),
     ) -> Dict[str, Any]:
         return run_save_home_endpoint(request)
+
+    @app.post("/tools/piper/save-manipulation-pose")
+    def save_manipulation_pose(
+        request: SaveHomeRequest,
+        _: None = Depends(require_auth),
+    ) -> Dict[str, Any]:
+        result = run_save_home_endpoint(SaveHomeRequest(pose_name="manipulation_pose"))
+        result["pose"] = "manipulation_pose"
+        return result
 
     @app.post("/tools/piper/save-previous")
     def save_previous(_: None = Depends(require_auth)) -> Dict[str, Any]:

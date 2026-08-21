@@ -16,8 +16,9 @@ remains on `8892`.
 
 - `approach the marker` -> `POST http://127.0.0.1:8893/tools/approach-marker`
 - `touch the marker` -> `POST http://127.0.0.1:8893/tools/touch-marker`
-- `go home` -> `POST http://127.0.0.1:8893/tools/go-home`
-- `save current pose as home` -> `POST http://127.0.0.1:8893/tools/save-home`
+- `go manipulation pose` -> `POST http://127.0.0.1:8893/tools/go-manipulation-pose`
+- legacy arm `go home` -> `POST http://127.0.0.1:8893/tools/go-home`
+- `save current pose as manipulation pose` -> `POST http://127.0.0.1:8893/tools/save-manipulation-pose`
 
 Always call:
 

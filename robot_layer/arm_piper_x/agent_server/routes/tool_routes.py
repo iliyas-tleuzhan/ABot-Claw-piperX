@@ -27,7 +27,7 @@ class SearchMarkerRequest(BaseModel):
     lease_id: Optional[str] = None
     arm: str = Field(default="front")
     direction: str = Field(default="auto")
-    max_steps: int = Field(default=100)
+    max_steps: int = Field(default=0)
 
 
 class HomeRequest(BaseModel):
@@ -69,8 +69,13 @@ def _normalize_marker_api_response(status_code: int, result: Dict[str, Any]) -> 
     if status_code >= 400:
         detail = result.get("detail", result)
         if isinstance(detail, dict):
-            return detail
-        return {"success": False, "stage": "marker_api", "message": str(detail)}
+            result = detail
+        else:
+            result = {"success": False, "stage": "marker_api", "message": str(detail)}
+    result.setdefault("success", False)
+    result.setdefault("finished", bool(result.get("success") or result.get("stage") in {
+        "complete", "search_complete", "marker_not_found", "step_complete", "failed"
+    }))
     return result
 
 
@@ -215,6 +220,16 @@ def create_router(cfg, sdk, lease_mgr, state_monitor) -> APIRouter:
             raise HTTPException(status_code=422 if status_code < 400 else status_code, detail=normalized)
         return normalized
 
+    @router.post("/go-manipulation-pose")
+    def go_manipulation_pose(req: HomeRequest):
+        require_execution_allowed(req.execute, req.lease_id)
+        status_code, result = sdk.go_home(req.model_dump(exclude={"lease_id"}))
+        normalized = _normalize_marker_api_response(status_code, result)
+        normalized["pose"] = "manipulation_pose"
+        if not normalized.get("success", False):
+            raise HTTPException(status_code=422 if status_code < 400 else status_code, detail=normalized)
+        return normalized
+
     @router.post("/go-previous")
     def go_previous(req: HomeRequest):
         require_execution_allowed(req.execute, req.lease_id)
@@ -246,6 +261,15 @@ def create_router(cfg, sdk, lease_mgr, state_monitor) -> APIRouter:
     def save_home(req: SaveHomeRequest):
         status_code, result = sdk.save_home(req.model_dump())
         normalized = _normalize_marker_api_response(status_code, result)
+        if not normalized.get("success", False):
+            raise HTTPException(status_code=422 if status_code < 400 else status_code, detail=normalized)
+        return normalized
+
+    @router.post("/save-manipulation-pose")
+    def save_manipulation_pose(req: SaveHomeRequest):
+        status_code, result = sdk.save_home({**req.model_dump(), "pose_name": "manipulation_pose"})
+        normalized = _normalize_marker_api_response(status_code, result)
+        normalized["pose"] = "manipulation_pose"
         if not normalized.get("success", False):
             raise HTTPException(status_code=422 if status_code < 400 else status_code, detail=normalized)
         return normalized

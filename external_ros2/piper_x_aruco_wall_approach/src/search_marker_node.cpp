@@ -122,6 +122,8 @@ public:
     joint4_reset_rad_ = declare_parameter<double>("joint4_reset_rad", 0.0);
     auto_horizontal_offset_rad_ = declare_parameter<double>("auto_horizontal_offset_rad", 2.0);
     auto_vertical_offset_rad_ = declare_parameter<double>("auto_vertical_offset_rad", 0.45);
+    vertical_lift_joint2_rad_ = declare_parameter<double>("vertical_lift_joint2_rad", 0.20);
+    vertical_lift_joint3_rad_ = declare_parameter<double>("vertical_lift_joint3_rad", 0.20);
     auto_sequence_ = declare_parameter<std::vector<std::string>>(
       "auto_sequence",
       std::vector<std::string>{
@@ -143,6 +145,9 @@ public:
         last_marker_received_ = now();
         last_marker_header_stamp_s_ = stamp_to_seconds(*msg);
         marker_sequence_++;
+        marker_detection_count_ = std::min(
+          marker_detection_count_ + 1, detection_window_frames_);
+        marker_confirmed_ = marker_detection_count_ >= required_detections_;
       },
       data_subscription_options);
 
@@ -239,7 +244,7 @@ private:
     }
     detection_window_frames_ = std::max(1, detection_window_frames_);
     required_detections_ = std::clamp(required_detections_, 1, detection_window_frames_);
-    max_steps_ = std::max(1, max_steps_);
+    max_steps_ = std::max(0, max_steps_);
     if (!std::isfinite(max_single_joint_step_deg_) || max_single_joint_step_deg_ <= 0.0) {
       max_single_joint_step_deg_ = 8.0;
     }
@@ -259,6 +264,12 @@ private:
     }
     if (!std::isfinite(auto_vertical_offset_rad_) || auto_vertical_offset_rad_ <= 0.0) {
       auto_vertical_offset_rad_ = 0.45;
+    }
+    if (!std::isfinite(vertical_lift_joint2_rad_) || vertical_lift_joint2_rad_ <= 0.0) {
+      vertical_lift_joint2_rad_ = 0.20;
+    }
+    if (!std::isfinite(vertical_lift_joint3_rad_) || vertical_lift_joint3_rad_ <= 0.0) {
+      vertical_lift_joint3_rad_ = 0.20;
     }
 
     for (auto & [direction, delta] : direction_deltas_) {
@@ -295,8 +306,18 @@ private:
     return marker_fresh_locked(now());
   }
 
+  bool continuously_confirmed_marker() const
+  {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    return marker_confirmed_ && marker_fresh_locked(now());
+  }
+
   bool confirm_marker(std::string & message)
   {
+    if (continuously_confirmed_marker()) {
+      message = "continuous ArUco detector already confirmed marker " + std::to_string(marker_id_);
+      return true;
+    }
     int detections = 0;
     uint64_t seen_sequence = 0;
     {
@@ -552,6 +573,11 @@ private:
       stage = "search_execution";
       message = "MoveIt execution failed for reactive search target '" + label + "'";
       return false;
+    }
+    if (continuously_confirmed_marker()) {
+      stage = "marker_acquired_during_motion";
+      message = "continuous ArUco detection acquired marker during search target '" + label + "'";
+      return true;
     }
     if (!wait_for_physical_feedback_motion(current, message)) {
       stage = "physical_motion";
@@ -1016,79 +1042,85 @@ private:
     }
 
     const auto joint1_bounds = joint_bounds(0, message);
+    const auto joint2_bounds = joint_bounds(1, message);
+    const auto joint3_bounds = joint_bounds(2, message);
     const auto joint4_bounds = joint_bounds(3, message);
-    if (!joint1_bounds || !joint4_bounds) {
+    if (!joint1_bounds || !joint2_bounds || !joint3_bounds || !joint4_bounds) {
       stage = "moveit_bounds";
       return false;
     }
+    const double horizontal = std::abs(auto_horizontal_offset_rad_);
+    const double lift_j2 = std::abs(vertical_lift_joint2_rad_);
+    const double lift_j3 = -std::abs(vertical_lift_joint3_rad_);
+    const double original_j2 = std::clamp((*initial)[1], joint2_bounds->first, joint2_bounds->second);
+    const double original_j3 = std::clamp((*initial)[2], joint3_bounds->first, joint3_bounds->second);
+    const double original_j4 = std::clamp((*initial)[3], joint4_bounds->first, joint4_bounds->second);
+    const double look_up = std::clamp(
+      original_j4 - auto_vertical_offset_rad_, joint4_bounds->first, joint4_bounds->second);
 
-    const double center_joint1 = std::clamp(0.0, joint1_bounds->first, joint1_bounds->second);
-    const double center_joint4 = std::clamp(
-      joint4_reset_rad_, joint4_bounds->first, joint4_bounds->second);
-    const double right_joint1 = std::clamp(
-      center_joint1 - auto_horizontal_offset_rad_, joint1_bounds->first, joint1_bounds->second);
-    const double left_joint1 = std::clamp(
-      center_joint1 + auto_horizontal_offset_rad_, joint1_bounds->first, joint1_bounds->second);
-    const double up_joint4 = std::clamp(
-      center_joint4 - auto_vertical_offset_rad_, joint4_bounds->first, joint4_bounds->second);
-    const double down_joint4 = std::clamp(
-      center_joint4 + auto_vertical_offset_rad_, joint4_bounds->first, joint4_bounds->second);
+    std::vector<double> sectors{
+      std::clamp((*initial)[0], joint1_bounds->first, joint1_bounds->second),
+      std::clamp((*initial)[0] + M_PI / 2.0, joint1_bounds->first, joint1_bounds->second),
+      joint1_bounds->second,
+      std::clamp((*initial)[0] - M_PI / 2.0, joint1_bounds->first, joint1_bounds->second),
+      joint1_bounds->first,
+      std::clamp((*initial)[0], joint1_bounds->first, joint1_bounds->second)};
 
-    for (const auto & requested : auto_sequence_) {
-      const auto direction = normalise_direction(requested);
-      std::vector<double> target = *initial;
-      if (direction == "current") {
-        if (maybe_check_marker_after_no_motion(
-            "current", found_at_pose, stage, message))
-        {
-          return true;
+    while (rclcpp::ok() && (max_steps_ == 0 || steps_used < max_steps_)) {
+      for (std::size_t sector_index = 0; sector_index < sectors.size(); ++sector_index) {
+        const double sector = sectors[sector_index];
+        double level_j2 = original_j2;
+        double level_j3 = original_j3;
+        while (rclcpp::ok() && (max_steps_ == 0 || steps_used < max_steps_)) {
+          const std::vector<std::pair<std::string, std::vector<double>>> views = {
+            {"sector_" + std::to_string(sector_index) + "_right", {sector - horizontal, level_j2, level_j3, original_j4, (*initial)[4], (*initial)[5]}},
+            {"sector_" + std::to_string(sector_index) + "_left", {sector + horizontal, level_j2, level_j3, original_j4, (*initial)[4], (*initial)[5]}},
+            {"sector_" + std::to_string(sector_index) + "_up", {sector, level_j2, level_j3, look_up, (*initial)[4], (*initial)[5]}},
+            {"sector_" + std::to_string(sector_index) + "_up_left", {sector + horizontal, level_j2, level_j3, look_up, (*initial)[4], (*initial)[5]}},
+            {"sector_" + std::to_string(sector_index) + "_j4_down", {sector, level_j2, level_j3, original_j4, (*initial)[4], (*initial)[5]}}};
+          for (const auto & [label, unclamped] : views) {
+            std::vector<double> target = unclamped;
+            target[0] = std::clamp(target[0], joint1_bounds->first, joint1_bounds->second);
+            target[1] = std::clamp(target[1], joint2_bounds->first, joint2_bounds->second);
+            target[2] = std::clamp(target[2], joint3_bounds->first, joint3_bounds->second);
+            target[3] = std::clamp(target[3], joint4_bounds->first, joint4_bounds->second);
+            bool motion_ok = true;
+            if (move_target_and_allow_skips(target, label, steps_used, found_at_pose, stage, message, motion_ok)) {
+              return true;
+            }
+            if (!motion_ok) {
+              return false;
+            }
+            if (max_steps_ > 0 && steps_used >= max_steps_) {
+              break;
+            }
+          }
+          const double next_j2 = level_j2 + lift_j2;
+          const double next_j3 = level_j3 + lift_j3;
+          if (next_j2 > joint2_bounds->second - min_feedback_motion_rad_ ||
+            next_j3 < joint3_bounds->first + min_feedback_motion_rad_)
+          {
+            break;
+          }
+          level_j2 = next_j2;
+          level_j3 = next_j3;
+          std::vector<double> lift_target = *initial;
+          lift_target[0] = sector;
+          lift_target[1] = level_j2;
+          lift_target[2] = level_j3;
+          lift_target[3] = original_j4;
+          bool motion_ok = true;
+          if (move_target_and_allow_skips(lift_target, "sector_" + std::to_string(sector_index) + "_lift", steps_used, found_at_pose, stage, message, motion_ok)) {
+            return true;
+          }
+          if (!motion_ok) {
+            return false;
+          }
         }
-        continue;
-      }
-
-      target[0] = center_joint1;
-      target[3] = center_joint4;
-      if (direction == "right") {
-        target[0] = right_joint1;
-      } else if (direction == "left") {
-        target[0] = left_joint1;
-      } else if (direction == "up") {
-        target[3] = up_joint4;
-      } else if (direction == "up_right") {
-        target[0] = right_joint1;
-        target[3] = up_joint4;
-      } else if (direction == "up_left") {
-        target[0] = left_joint1;
-        target[3] = up_joint4;
-      } else if (direction == "center") {
-        // Keep the explicit center target for a known forward-facing view.
-      } else if (direction == "down") {
-        target[3] = down_joint4;
-      } else if (direction == "down_right") {
-        target[0] = right_joint1;
-        target[3] = down_joint4;
-      } else if (direction == "down_left") {
-        target[0] = left_joint1;
-        target[3] = down_joint4;
-      } else {
-        stage = "search_direction";
-        message = "unsupported auto search direction '" + requested + "'";
-        return false;
-      }
-
-      bool motion_ok = true;
-      if (move_target_and_allow_skips(
-          target, "auto_" + direction, steps_used, found_at_pose, stage, message, motion_ok))
-      {
-        return true;
-      }
-      if (!motion_ok) {
-        return false;
       }
     }
-
     stage = "search_complete";
-    message = "marker_not_found after directional camera search sequence";
+    message = max_steps_ == 0 ? "search stopped" : "marker_not_found after configured search limit";
     return false;
   }
 
@@ -1102,6 +1134,12 @@ private:
     response->success = false;
     response->found_at_pose = "";
     response->poses_checked = 0;
+
+    {
+      std::lock_guard<std::mutex> lock(data_mutex_);
+      marker_detection_count_ = 0;
+      marker_confirmed_ = false;
+    }
 
     std::string found_at_pose;
     std::string stage;
@@ -1192,6 +1230,8 @@ private:
   double joint4_reset_rad_{};
   double auto_horizontal_offset_rad_{};
   double auto_vertical_offset_rad_{};
+  double vertical_lift_joint2_rad_{};
+  double vertical_lift_joint3_rad_{};
   std::vector<std::string> auto_sequence_;
   std::unordered_map<std::string, std::vector<double>> direction_deltas_;
   std::vector<double> cumulative_offset_ = std::vector<double>(kJointCount, 0.0);
@@ -1209,6 +1249,8 @@ private:
   std::optional<rclcpp::Time> last_marker_received_;
   std::optional<double> last_marker_header_stamp_s_;
   uint64_t marker_sequence_{0};
+  int marker_detection_count_{0};
+  bool marker_confirmed_{false};
   std::optional<rclcpp::Time> last_joint_received_;
   std::optional<sensor_msgs::msg::JointState> last_joint_state_;
 };

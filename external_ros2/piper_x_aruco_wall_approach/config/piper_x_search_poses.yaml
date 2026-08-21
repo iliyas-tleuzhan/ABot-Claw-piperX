@@ -1,9 +1,10 @@
 # PiPER-X reactive marker-search configuration.
 #
-# Search no longer depends on hardcoded 3x3 joint poses. A full auto search
-# checks the current view, then uses wide absolute joint1 sectors at horizontal,
-# upper, center, and lower camera levels. One-step search still accepts bounded
-# directions through /tools/search-step.
+# Search uses continuous ArUco subscription while MoveIt is moving. The auto
+# pattern scans right/left, looks up with joint4, looks up-left, returns joint4
+# down, then lifts with the coupled joint2/joint3 pair. It repeats the height
+# sweep through joint1 sectors and keeps cycling until the marker is found or
+# the request is cancelled. One-step search remains available for diagnostics.
 #
 # Defaults:
 # - Front PiPER-X arm CAN: can2, configured by Trystan's integrated driver.
@@ -21,9 +22,9 @@ search_marker_node:
     settle_time_s: 0.2
     detection_window_frames: 5
     required_detections: 3
-    # Kept for backward-compatible API payloads. Full direction=auto search is
-    # bounded by joint limits and the finite joint1 sector list, not max_steps.
-    max_steps: 100
+    # Zero means continue the complete sector/height pattern until marker found.
+    # A positive value is retained as an explicit operator override.
+    max_steps: 0
     # Search motion should be visibly quicker than final touch/approach motion.
     # These apply only to the search_marker_node MoveIt group.
     velocity_scaling: 0.70
@@ -40,8 +41,10 @@ search_marker_node:
     joint4_reset_rad: 0.0
     # Joint1 covers the broadest safe sectors allowed by the URDF limits.
     # Joint4 only selects the upper/lower viewing levels.
-    auto_horizontal_offset_rad: 2.0
-    auto_vertical_offset_rad: 0.45
+    auto_horizontal_offset_rad: 0.55
+    auto_vertical_offset_rad: 0.35
+    vertical_lift_joint2_rad: 0.20
+    vertical_lift_joint3_rad: 0.20
 
     # These deltas are used by one-step search commands. Full auto search uses
     # the absolute sequence below, so joint1 actually traverses both sides
@@ -56,14 +59,6 @@ search_marker_node:
       down_left:  [10.0, 0.0, 0.0, 10.0, 0.0, 0.0]
       down_right: [-10.0, 0.0, 0.0, 10.0, 0.0, 0.0]
 
-    auto_sequence:
-      - current
-      - right
-      - left
-      - up
-      - up_right
-      - up_left
-      - center
-      - down
-      - down_right
-      - down_left
+    # Retained for parameter-file compatibility. The C++ node uses the
+    # continuous sector/height pattern above for direction=auto.
+    auto_sequence: [current]

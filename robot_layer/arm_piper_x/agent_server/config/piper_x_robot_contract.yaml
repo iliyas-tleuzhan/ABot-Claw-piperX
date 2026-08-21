@@ -77,7 +77,7 @@ camera:
 aruco:
   dictionary: DICT_ARUCO_ORIGINAL
   marker_id: 6
-  marker_size_m: 0.03
+  marker_size_m: 0.06
   pose_topic: /aruco_single/pose
 local_http_api:
   agent_base_url: http://127.0.0.1:8893
@@ -93,7 +93,9 @@ local_http_api:
   go_found_marker: /tools/go-found-marker
   save_found_marker: /tools/save-found-marker
   go_nav_pose: /tools/go-nav-pose
+  go_manipulation_pose: /tools/go-manipulation-pose
   go_home: /tools/go-home
+  save_manipulation_pose: /tools/save-manipulation-pose
   save_home: /tools/save-home
   go_previous: /tools/go-previous
   save_previous: /tools/save-previous

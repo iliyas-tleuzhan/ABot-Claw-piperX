@@ -92,20 +92,22 @@ IDLE_AT_HOME -> NAVIGATING_TO_DOOR -> ARM_HOME_FOR_MANIPULATION -> MANIPULATION_
 -> NAVIGATING_TO_HOME -> IDLE_AT_HOME
 ```
 
-1. Publish `door` to `/landmark_navigator/go_marker`.
+1. Report `navigation starting`, then publish `door` to `/landmark_navigator/go_marker`.
 2. Wait for `/door_navigation/arrived` with `arrived_at_door`, or generic
    `/landmark_navigator/arrived` with `landmark=door` and `status=succeeded`.
 3. Do not request manipulation before confirmed door arrival.
-4. Transition out of navigation: pause map updates without deleting the map,
-   then move both PiPER arms to their verified `home` poses and verify fresh
-   feedback. `home` is the manipulation-ready pose; it is not `nav pose`.
+4. Report `navigation ended`. Transition out of navigation: pause map updates
+   without deleting the map, then move both PiPER arms to their verified
+   `manipulation pose` and verify fresh feedback. The legacy arm `home` command
+   is an alias; it is not the Bunker navigation-home landmark.
 5. Let `/nav2_arrival_manipulation_trigger` publish the existing
    `/front_piper/task/start` request. The agent does not publish a duplicate.
-6. Wait for manipulation progress. Treat `running` as active, and
+6. Wait for manipulation progress. Relay `manipulation starting` and progress
+   events while the task runs. Treat `running` as active, and
    `succeeded`, `done`, `finished`, `success`, and
    `manipulation_succeeded` as success. Treat failed, aborted, canceled, and
    rejected as failure.
-7. On success, move both arms to their verified `nav pose`, verify feedback,
+7. On success, report `manipulation ended`, move both arms to their verified `nav pose`, verify feedback,
    resume map updates, and only then publish `home` to
    `/landmark_navigator/go_marker`.
 8. Declare completion only after generic `/landmark_navigator/arrived` reports

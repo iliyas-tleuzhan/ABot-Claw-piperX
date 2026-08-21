@@ -63,12 +63,14 @@ curl -sS -X POST http://127.0.0.1:8893/tools/approach-marker \
   -d '{"execute":true,"lease_id":"<LEASE_ID>","pre_clearance_m":0.05,"final_clearance_m":0.005,"retract_after":false,"retract_distance_m":0.05,"final_velocity_scaling":0.16,"return_home_after":false,"home_duration_s":6.0}'
 ```
 
-If marker `6` is not currently visible, use the robot-layer full search instead
-of the old 3x3 hardcoded pose grid or a language-model loop of tiny search
-steps. The full search raises joint4 while scanning left/right, then repeats
-that block at joint1 sectors: current/center, `+1.6`, positive joint1 limit,
-`-1.6`, and negative joint1 limit. Do not publish raw joint, CAN, or MoveIt
-commands.
+If marker `6` is not currently visible, use the robot-layer continuous search,
+not a language-model loop of tiny search steps. ArUco detection remains active
+while MoveIt moves. At each height it scans right/left, tilts up with joint4,
+scans up-left, returns joint4 down, then lifts with coupled joints 2 and 3.
+The height sweep repeats across current, +90 degrees, maximum positive, -90
+degrees, maximum negative, and current joint1 sectors. `max_steps: 0` is the
+default and means continue until found or a physical/planning failure. Do not
+publish raw joint, CAN, or MoveIt commands.
 
 Reactive search loop:
 
@@ -77,7 +79,8 @@ Reactive search loop:
 3. If marker is hidden, acquire a lease and call `/tools/search-marker` with `direction:"auto"`.
 4. Re-check health/result after the search returns.
 5. Stop immediately when `marker_found: true` or `marker_visible: true`.
-6. If the full sweep finishes without a marker, report `marker_not_found`.
+6. Relay `/manipulation_task/progress` events and every response's `success`
+   and `finished` fields. Do not issue another motion while `finished:false`.
 
 Search one step:
 

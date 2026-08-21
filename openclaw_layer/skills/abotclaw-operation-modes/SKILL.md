@@ -67,7 +67,7 @@ MANIPULATION --manipulation complete--> NAVIGATION
    the current map and localization state.
 5. Move both PiPER arms to their verified `home` poses. This is the
    manipulation-ready pose and is distinct from `nav pose`.
-6. Confirm fresh joint feedback for both home poses and confirm that no arm
+6. Confirm fresh joint feedback for both manipulation poses and confirm that no arm
    trajectory remains active.
 7. Mark the system `MANIPULATION`.
 8. Only then allow PiPER manipulation tools.

@@ -79,6 +79,7 @@ def command_needs_lease(args: argparse.Namespace) -> bool:
         "touch",
         "search",
         "home",
+        "manipulation-pose",
         "previous",
         "found-marker",
         "open-gripper",
@@ -125,6 +126,12 @@ def main() -> int:
     home.add_argument("--lease-id")
     home.add_argument("--arm", choices=["front", "rear"], default="front")
     home.add_argument("--duration", type=float, default=6.0)
+    manipulation_pose = subparsers.add_parser("manipulation-pose")
+    manipulation_pose.add_argument("--execute", action="store_true")
+    manipulation_pose.add_argument("--plan-only", action="store_true")
+    manipulation_pose.add_argument("--lease-id")
+    manipulation_pose.add_argument("--arm", choices=["front", "rear"], default="front")
+    manipulation_pose.add_argument("--duration", type=float, default=6.0)
     previous = subparsers.add_parser("previous")
     previous.add_argument("--execute", action="store_true")
     previous.add_argument("--plan-only", action="store_true")
@@ -144,7 +151,8 @@ def main() -> int:
     nav_pose.add_argument("--arm", choices=["front", "rear"], default="front")
     nav_pose.add_argument("--duration", type=float, default=6.0)
     save_home = subparsers.add_parser("save-home")
-    save_home.add_argument("--pose-name", default="home")
+    save_home.add_argument("--pose-name", default="manipulation_pose")
+    subparsers.add_parser("save-manipulation-pose")
     subparsers.add_parser("save-previous")
     for name in ("open-gripper", "close-gripper"):
         gripper = subparsers.add_parser(name)
@@ -181,11 +189,11 @@ def main() -> int:
             return print_result(
                 *request_json("POST", f"{base_url}/lease/release", {"lease_id": args.lease_id})
             )
-        if args.command == "home":
+        if args.command in {"home", "manipulation-pose"}:
             return print_result(
                 *request_json(
                     "POST",
-                    f"{base_url}/tools/go-home",
+                    f"{base_url}/tools/go-manipulation-pose" if args.command == "manipulation-pose" else f"{base_url}/tools/go-home",
                     {"execute": args.execute, "lease_id": args.lease_id, "arm": args.arm, "duration_s": args.duration},
                 )
             )
@@ -213,9 +221,9 @@ def main() -> int:
                     {"execute": args.execute, "lease_id": args.lease_id, "arm": args.arm, "duration_s": args.duration},
                 )
             )
-        if args.command == "save-home":
+        if args.command in {"save-home", "save-manipulation-pose"}:
             return print_result(
-                *request_json("POST", f"{base_url}/tools/save-home", {"pose_name": args.pose_name})
+                *request_json("POST", f"{base_url}/tools/save-manipulation-pose" if args.command == "save-manipulation-pose" else f"{base_url}/tools/save-home", {"pose_name": "manipulation_pose"})
             )
         if args.command == "save-previous":
             return print_result(*request_json("POST", f"{base_url}/tools/save-previous", {}))
