@@ -761,16 +761,25 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
             }
         goal = FollowJointTrajectory.Goal()
         command_names = self._command_joint_names(joint_names, selected_arm)
+        current_positions = self._snapshot(command_names)
+        if current_positions is None:
+            raise RuntimeError(
+                f"physical feedback is stale or missing before {pose_name} trajectory"
+            )
         goal.trajectory.joint_names = command_names
-        point = JointTrajectoryPoint()
-        point.positions = list(positions)
-        point.velocities = [0.0] * len(positions)
         duration = float(request.duration_s)
-        point.time_from_start = Duration(
+        start_point = JointTrajectoryPoint()
+        start_point.positions = list(current_positions)
+        start_point.velocities = [0.0] * len(current_positions)
+        start_point.time_from_start = Duration(sec=0, nanosec=0)
+        target_point = JointTrajectoryPoint()
+        target_point.positions = list(positions)
+        target_point.velocities = [0.0] * len(positions)
+        target_point.time_from_start = Duration(
             sec=int(duration),
             nanosec=int((duration - int(duration)) * 1_000_000_000),
         )
-        goal.trajectory.points = [point]
+        goal.trajectory.points = [start_point, target_point]
         goal.goal_time_tolerance = Duration(sec=2, nanosec=0)
 
         send_future = client.send_goal_async(goal)
