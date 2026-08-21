@@ -77,7 +77,9 @@ Use the Python helper only for diagnostics or the complete coordinated cycle:
 python3 openclaw_layer/skills/abotclaw-bunker-navigation/scripts/bunker_navigation_cycle.py cycle
 ```
 
-The helper's `health` output is diagnostic only. Its `command_ready`, Nav2,
+The helper's `health` output is diagnostic only. It waits up to 8 seconds for
+DDS discovery by default (`--discovery-timeout-s` can override this). Its
+`command_ready`, Nav2,
 arrival, and manipulation fields must never block the two direct commands
 above.
 

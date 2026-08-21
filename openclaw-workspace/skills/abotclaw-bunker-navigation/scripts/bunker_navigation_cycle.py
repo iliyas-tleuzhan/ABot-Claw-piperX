@@ -104,8 +104,21 @@ class NavigationNode(Node):
         response = future.result()
         return bool(response.success), response.message
 
-    def health(self) -> dict[str, Any]:
-        rclpy.spin_once(self, timeout_sec=0.5)
+    def health(self, discovery_timeout_s: float = 8.0) -> dict[str, Any]:
+        # DDS discovery can expose the topic subscriber before it exposes all
+        # Nav2 node names. Keep spinning until the graph settles or the timeout
+        # expires instead of treating a transient graph as a failure.
+        deadline = time.monotonic() + max(0.5, discovery_timeout_s)
+        while time.monotonic() < deadline:
+            rclpy.spin_once(self, timeout_sec=0.2)
+            topics = {name for name, _types in self.get_topic_names_and_types()}
+            nodes = {name for name, _namespace in self.get_node_names_and_namespaces()}
+            if (
+                "/landmark_navigator/go_marker" in topics
+                and {"bt_navigator", "controller_server", "planner_server"}.issubset(nodes)
+                and "/navigate_to_pose/_action/status" in topics
+            ):
+                break
         topics = {name for name, _types in self.get_topic_names_and_types()}
         services = {name for name, _types in self.get_service_names_and_types()}
         nodes = {name for name, _namespace in self.get_node_names_and_namespaces()}
@@ -196,7 +209,7 @@ def run(args: argparse.Namespace) -> int:
     node = NavigationNode()
     try:
         if args.command == "health":
-            result = node.health()
+            result = node.health(args.discovery_timeout_s)
             print(json.dumps(result, sort_keys=True))
             return 0 if result["ready_for_navigation"] else 2
 
@@ -268,6 +281,7 @@ def main() -> int:
     parser.add_argument("command", choices=("health", "go-marker", "go-home", "cycle"))
     parser.add_argument("landmark", nargs="?")
     parser.add_argument("--timeout-s", type=float, default=300.0)
+    parser.add_argument("--discovery-timeout-s", type=float, default=8.0)
     args = parser.parse_args()
     if args.command == "go-marker" and not args.landmark:
         parser.error("go-marker requires home or door")
