@@ -862,10 +862,15 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         positions = dict(zip(joint_state.name, joint_state.position))
         values = []
         for name in names:
-            raw_name = self._raw_joint_name(str(name))
-            if raw_name not in positions:
+            requested_name = str(name)
+            raw_name = self._raw_joint_name(requested_name)
+            # Prefer the action's exact prefixed name, then accept the raw
+            # driver name from /front_piper/feedback/joint_states.  This keeps
+            # the physical feedback gate compatible with either topic shape.
+            feedback_name = requested_name if requested_name in positions else raw_name
+            if feedback_name not in positions:
                 return None
-            value = float(positions[raw_name])
+            value = float(positions[feedback_name])
             if not math.isfinite(value):
                 return None
             values.append(value)

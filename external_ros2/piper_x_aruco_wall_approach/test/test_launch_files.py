@@ -77,6 +77,7 @@ def test_touch_marker_full_stack_launch_loads():
         for key, value in include_launch_arguments
     ]
     assert launch_defaults["joint_state_topic"] == "/joint_states"
+    assert launch_defaults["marker_api_joint_state_topic"] == "/front_piper/feedback/joint_states"
     assert launch_defaults["control_topic"] == "/front_piper/control/joint_states"
     assert launch_defaults["robot_description_topic"] == "/robot_description"
     assert launch_defaults["robot_description_semantic_topic"] == "/front_piper/integrated_robot_description_semantic"

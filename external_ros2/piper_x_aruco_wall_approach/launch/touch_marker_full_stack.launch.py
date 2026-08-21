@@ -147,7 +147,13 @@ def generate_launch_description():
         DeclareLaunchArgument("handeye_parent_frame", default_value="front_piper_flange_link"),
         DeclareLaunchArgument("marker_timeout", default_value="1.0"),
         DeclareLaunchArgument("point_cloud_timeout", default_value="2.0"),
+        # MoveIt/search consume the integrated prefixed state on /joint_states,
+        # while the physical API gate must read the raw front-arm feedback.
         DeclareLaunchArgument("joint_state_topic", default_value="/joint_states"),
+        DeclareLaunchArgument(
+            "marker_api_joint_state_topic",
+            default_value="/front_piper/feedback/joint_states",
+        ),
         DeclareLaunchArgument("control_topic", default_value="/front_piper/control/joint_states"),
         # Trystan's active MoveIt model is the prefixed full-system URDF.  The
         # semantic bridge below supplies its matching front-arm SRDF.
@@ -395,7 +401,7 @@ def generate_launch_description():
                 "--found-marker-pose-file",
                 found_marker_pose_file,
                 "--joint-state-topic",
-                joint_state_topic,
+                marker_api_joint_state_topic,
                 "--joint-state-timeout-s",
                 joint_state_timeout,
                 "--trajectory-action",
