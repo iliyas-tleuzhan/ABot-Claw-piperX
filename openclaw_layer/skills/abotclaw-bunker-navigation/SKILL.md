@@ -56,9 +56,11 @@ python3 openclaw_layer/skills/abotclaw-bunker-navigation/scripts/bunker_navigati
 python3 openclaw_layer/skills/abotclaw-bunker-navigation/scripts/bunker_navigation_cycle.py cycle
 ```
 
-`health` is read-only. It checks the landmark navigator, Nav2 nodes, goal
-input, progress topics, and generic arrival topic. Do not guess a replacement
-topic when a required interface is missing.
+`health` is read-only. It checks the landmark navigator, Nav2 nodes, the
+`/landmark_navigator/go_marker` input, and the `/navigate_to_pose` action status
+for ordinary navigation. Manipulation progress and door-arrival topics are
+optional for a simple navigation request and are required only for the complete
+navigation/manipulation `cycle`.
 
 ## Cycle behavior
 
@@ -105,7 +107,9 @@ door -> home: navigation_direction=reverse, active_camera=rear_camera
 - Never publish `/cmd_vel`, `/cmd_vel_autonomy`, or `/nav2/cmd_vel_raw`.
 - Never send direct Bunker CAN or PiPER joint/MoveIt commands.
 - Never send a second manipulation request for an active door arrival.
-- Require a fresh health result before physical navigation.
+- Require a fresh `ready_for_navigation` health result before physical
+  navigation. Do not reject `go-marker door` merely because manipulation
+  progress or door-arrival handoff topics are disabled.
 - Stop on navigation failure, manipulation failure, safety stop, or missing
   arrival confirmation.
 

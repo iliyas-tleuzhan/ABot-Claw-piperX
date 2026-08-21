@@ -109,35 +109,44 @@ class NavigationNode(Node):
         topics = {name for name, _types in self.get_topic_names_and_types()}
         services = {name for name, _types in self.get_service_names_and_types()}
         nodes = {name for name, _namespace in self.get_node_names_and_namespaces()}
-        required_topics = {
-            "/landmark_navigator/go_marker",
-            "/door_navigation/arrived",
-        }
+        required_topics = {"/landmark_navigator/go_marker"}
         progress_topics = {
             "/manipulation_task/progress",
             "/navigation_manipulation/progress",
         }
+        navigation_action_status = "/navigate_to_pose/_action/status" in topics
         result = {
             "ros_ok": True,
             "required_topics_visible": sorted(required_topics & topics),
             "missing_topic_names": sorted(required_topics - topics),
+            "navigation_action_status_visible": navigation_action_status,
+            "door_arrival_visible": "/door_navigation/arrived" in topics,
             "progress_topics_visible": sorted(progress_topics & topics),
             "progress_topic_missing": not bool(progress_topics & topics),
             "go_home_service_visible": "/landmark_navigator/go_home" in services,
             "generic_arrival_visible": "/landmark_navigator/arrived" in topics,
             "landmark_navigator_node_visible": "landmark_navigator" in nodes,
             "nav2_nodes_visible": sorted(
-                name for name in ("bt_navigator", "controller_server") if name in nodes
+                name for name in (
+                    "bt_navigator",
+                    "controller_server",
+                    "planner_server",
+                    "lifecycle_manager_navigation",
+                ) if name in nodes
             ),
         }
         result["ready_for_navigation"] = (
             not result["missing_topic_names"]
-            and not result["progress_topic_missing"]
             and result["landmark_navigator_node_visible"]
-            and len(result["nav2_nodes_visible"]) == 2
+            and {"bt_navigator", "controller_server", "planner_server"}.issubset(
+                result["nav2_nodes_visible"]
+            )
+            and result["navigation_action_status_visible"]
         )
         result["ready_for_cycle"] = (
-            result["ready_for_navigation"] and result["generic_arrival_visible"]
+            result["ready_for_navigation"]
+            and (result["generic_arrival_visible"] or result["door_arrival_visible"])
+            and not result["progress_topic_missing"]
         )
         return result
 
