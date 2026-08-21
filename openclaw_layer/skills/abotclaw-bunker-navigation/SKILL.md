@@ -59,11 +59,11 @@ export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 export ROS_LOCALHOST_ONLY=1
 
 # Bunker to the door landmark
-ros2 topic pub --once /landmark_navigator/go_marker \
+ros2 topic pub --once --keep-alive 2 /landmark_navigator/go_marker \
   std_msgs/msg/String "{data: door}"
 
 # Bunker to the home landmark
-ros2 topic pub --once /landmark_navigator/go_marker \
+ros2 topic pub --once --keep-alive 2 /landmark_navigator/go_marker \
   std_msgs/msg/String "{data: home}"
 ```
 
