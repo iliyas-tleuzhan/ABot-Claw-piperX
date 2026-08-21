@@ -112,7 +112,10 @@ public:
     max_single_joint_step_deg_ = declare_parameter<double>("max_single_joint_step_deg", 8.0);
     min_feedback_motion_deg_ = declare_parameter<double>("min_feedback_motion_deg", 1.0);
     physical_motion_timeout_s_ = declare_parameter<double>("physical_motion_timeout_s", 2.0);
-    require_physical_hardware_ = declare_parameter<bool>("require_physical_hardware", true);
+    // The integrated PiPER stack uses the AgileX driver directly, not a
+    // ros2_control controller manager. Physical execution is still verified
+    // after every MoveIt step from fresh /feedback/joint_states motion.
+    require_physical_hardware_ = declare_parameter<bool>("require_physical_hardware", false);
     controller_manager_service_ = declare_parameter<std::string>("controller_manager_service", "");
     center_step_scale_ = declare_parameter<double>("center_step_scale", 1.0);
     joint1_near_sweep_rad_ = declare_parameter<double>("joint1_near_sweep_rad", 1.6);

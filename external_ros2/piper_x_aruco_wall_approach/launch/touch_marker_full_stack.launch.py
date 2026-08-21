@@ -59,6 +59,7 @@ def generate_launch_description():
     trajectory_action = LaunchConfiguration("trajectory_action")
     enable_service = LaunchConfiguration("enable_service")
     controller_manager_service = LaunchConfiguration("controller_manager_service")
+    require_physical_hardware = LaunchConfiguration("require_physical_hardware")
     use_integrated_moveit_semantic_bridge = LaunchConfiguration("use_integrated_moveit_semantic_bridge")
     integrated_semantic_topic = LaunchConfiguration("integrated_semantic_topic")
     control_topic = LaunchConfiguration("control_topic")
@@ -163,6 +164,12 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "controller_manager_service",
             default_value="/front_piper/controller_manager/list_hardware_components",
+        ),
+        DeclareLaunchArgument(
+            "require_physical_hardware",
+            # The integrated AgileX driver exposes feedback and an action
+            # bridge but does not run a ros2_control controller manager.
+            default_value="false",
         ),
         DeclareLaunchArgument("joint_state_timeout", default_value="2.5"),
         DeclareLaunchArgument(
@@ -349,6 +356,9 @@ def generate_launch_description():
                     "joint_state_topic": joint_state_topic,
                     "move_group_namespace": piper_namespace,
                     "controller_manager_service": controller_manager_service,
+                    "require_physical_hardware": ParameterValue(
+                        require_physical_hardware, value_type=bool
+                    ),
                 },
             ],
             remappings=[
