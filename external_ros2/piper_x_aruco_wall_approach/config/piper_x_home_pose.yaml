@@ -28,7 +28,9 @@ joint_state:
   positions_rad:
     - 0.0
     - 0.36
-    - 0.86
+    # PiPER-X joint3 has an upper limit of 0 rad; use the matching negative
+    # elbow-side value rather than sending an impossible positive target.
+    - -0.86
     - 0.56
     - 0.0
     - 0.0

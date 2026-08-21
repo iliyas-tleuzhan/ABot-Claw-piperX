@@ -392,11 +392,11 @@ def test_successful_mocked_home():
     assert adapter.calls[0][0] == "home"
 
 
-def test_default_home_pose_file_is_zero_pose():
+def test_default_home_pose_file_is_within_piper_limits():
     home_file = pathlib.Path(__file__).resolve().parents[1] / "config" / "piper_x_home_pose.yaml"
     names, positions = api.MarkerTaskBridge._load_home_pose(str(home_file))
     assert names == ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
-    assert positions == [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    assert positions == [0.0, 0.36, -0.86, 0.56, 0.0, 0.0]
 
 
 def test_successful_mocked_previous():

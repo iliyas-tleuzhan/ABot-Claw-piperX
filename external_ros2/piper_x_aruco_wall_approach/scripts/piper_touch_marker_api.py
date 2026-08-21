@@ -833,6 +833,27 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         prefix = self.command_joint_prefix if normalize_arm(arm) == "front" else "rear_piper_"
         return [f"{prefix}{self._raw_joint_name(str(name))}" for name in names]
 
+    def _snapshot(self, names) -> Optional[list[float]]:
+        """Return fresh physical feedback in the requested joint-name order."""
+        now = time.monotonic()
+        with self._lock:
+            joint_state = self._latest_joint_state
+            received = self._joint_state_received_monotonic_s
+        if joint_state is None or received is None or now - received > self.joint_state_timeout_s:
+            return None
+
+        positions = dict(zip(joint_state.name, joint_state.position))
+        values = []
+        for name in names:
+            raw_name = self._raw_joint_name(str(name))
+            if raw_name not in positions:
+                return None
+            value = float(positions[raw_name])
+            if not math.isfinite(value):
+                return None
+            values.append(value)
+        return values
+
     def go_home(self, request: HomeRequest) -> Dict[str, Any]:
         return self._execute_saved_joint_pose("home", self.home_joint_names, self.home_positions, request)
 
