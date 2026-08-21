@@ -56,11 +56,13 @@ python3 openclaw_layer/skills/abotclaw-bunker-navigation/scripts/bunker_navigati
 python3 openclaw_layer/skills/abotclaw-bunker-navigation/scripts/bunker_navigation_cycle.py cycle
 ```
 
-`health` is read-only. It checks the landmark navigator, Nav2 nodes, the
-`/landmark_navigator/go_marker` input, and the `/navigate_to_pose` action status
-for ordinary navigation. Manipulation progress and door-arrival topics are
-optional for a simple navigation request and are required only for the complete
-navigation/manipulation `cycle`.
+`health` is read-only. For a simple landmark command, use `command_ready`: the
+landmark navigator must be visible and subscribed to
+`/landmark_navigator/go_marker`. Do not block `go-marker door` or
+`go-marker home` on Nav2 action-status, arrival, or manipulation topics. The
+additional `nav2_stack_ready` and `ready_for_cycle` fields are diagnostics for
+the complete navigation/manipulation `cycle`, not prerequisites for publishing
+a named landmark command.
 
 ## Cycle behavior
 
@@ -107,9 +109,10 @@ door -> home: navigation_direction=reverse, active_camera=rear_camera
 - Never publish `/cmd_vel`, `/cmd_vel_autonomy`, or `/nav2/cmd_vel_raw`.
 - Never send direct Bunker CAN or PiPER joint/MoveIt commands.
 - Never send a second manipulation request for an active door arrival.
-- Require a fresh `ready_for_navigation` health result before physical
-  navigation. Do not reject `go-marker door` merely because manipulation
-  progress or door-arrival handoff topics are disabled.
+- Require only a fresh `command_ready` result before publishing a named
+  landmark command. Do not reject `go-marker door` or `go-marker home` merely
+  because Nav2 action status, manipulation progress, or arrival handoff topics
+  are unavailable.
 - Stop on navigation failure, manipulation failure, safety stop, or missing
   arrival confirmation.
 

@@ -109,6 +109,9 @@ class NavigationNode(Node):
         topics = {name for name, _types in self.get_topic_names_and_types()}
         services = {name for name, _types in self.get_service_names_and_types()}
         nodes = {name for name, _namespace in self.get_node_names_and_namespaces()}
+        go_marker_subscriber_visible = bool(
+            self.get_subscriptions_info_by_topic("/landmark_navigator/go_marker")
+        )
         required_topics = {"/landmark_navigator/go_marker"}
         progress_topics = {
             "/manipulation_task/progress",
@@ -119,6 +122,7 @@ class NavigationNode(Node):
             "ros_ok": True,
             "required_topics_visible": sorted(required_topics & topics),
             "missing_topic_names": sorted(required_topics - topics),
+            "go_marker_subscriber_visible": go_marker_subscriber_visible,
             "navigation_action_status_visible": navigation_action_status,
             "door_arrival_visible": "/door_navigation/arrived" in topics,
             "progress_topics_visible": sorted(progress_topics & topics),
@@ -135,16 +139,22 @@ class NavigationNode(Node):
                 ) if name in nodes
             ),
         }
-        result["ready_for_navigation"] = (
+        # A named landmark command only needs a live landmark navigator
+        # subscriber. Nav2/action checks are reported separately for cycle.
+        result["command_ready"] = (
             not result["missing_topic_names"]
-            and result["landmark_navigator_node_visible"]
+            and result["go_marker_subscriber_visible"]
+        )
+        result["nav2_stack_ready"] = (
+            result["command_ready"]
             and {"bt_navigator", "controller_server", "planner_server"}.issubset(
                 result["nav2_nodes_visible"]
             )
             and result["navigation_action_status_visible"]
         )
+        result["ready_for_navigation"] = result["command_ready"]
         result["ready_for_cycle"] = (
-            result["ready_for_navigation"]
+            result["nav2_stack_ready"]
             and (result["generic_arrival_visible"] or result["door_arrival_visible"])
             and not result["progress_topic_missing"]
         )
