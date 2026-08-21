@@ -189,10 +189,16 @@ curl -s -X POST http://127.0.0.1:8892/tools/piper/search-marker \
   -d '{"execute":true,"direction":"auto"}' | python3 -m json.tool
 ```
 
-Full `direction:"auto"` search is bounded by the robot joint sweep, not by a
-max-step counter. It raises joint4 while scanning left/right, repeats at joint1
-sectors `+1.6`, positive limit, `-1.6`, and negative limit, then returns joint1
-and joint4 to zero if marker 6 is not found.
+Full `direction:"auto"` search uses this faster absolute camera sequence:
+
+```text
+current -> right -> left -> up -> up_right -> up_left -> center
+        -> down -> down_right -> down_left
+```
+
+Joint1 makes the wide horizontal coverage and joint4 only selects the upper or
+lower view. It stops immediately when marker 6 is confirmed; otherwise it
+reports `marker_not_found` after the sequence.
 
 Search one step:
 

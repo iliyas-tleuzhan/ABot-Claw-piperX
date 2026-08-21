@@ -1,10 +1,9 @@
 # PiPER-X reactive marker-search configuration.
 #
 # Search no longer depends on hardcoded 3x3 joint poses. A full auto search
-# performs a finite joint-limit sweep: raise joint4 while scanning left/right,
-# reset joint4, sweep joint1 through center/+1.6/+limit/-1.6/-limit, then return
-# joint1 and joint4 to zero if marker 6 is still not found. One-step search
-# still accepts bounded directions through /tools/search-step.
+# checks the current view, then uses wide absolute joint1 sectors at horizontal,
+# upper, center, and lower camera levels. One-step search still accepts bounded
+# directions through /tools/search-step.
 #
 # Defaults:
 # - Front PiPER-X arm CAN: can2, configured by Trystan's integrated driver.
@@ -19,7 +18,7 @@ search_marker_node:
     planning_group: arm
     marker_id: 6
     marker_timeout_s: 1.0
-    settle_time_s: 0.5
+    settle_time_s: 0.2
     detection_window_frames: 5
     required_detections: 3
     # Kept for backward-compatible API payloads. Full direction=auto search is
@@ -27,23 +26,26 @@ search_marker_node:
     max_steps: 100
     # Search motion should be visibly quicker than final touch/approach motion.
     # These apply only to the search_marker_node MoveIt group.
-    velocity_scaling: 0.45
-    acceleration_scaling: 0.35
-    planning_time: 10.0
-    planning_attempts: 10
+    velocity_scaling: 0.70
+    acceleration_scaling: 0.55
+    planning_time: 3.0
+    planning_attempts: 3
 
     # Hard safety cap for a single reactive step. Direction deltas larger than
     # this are clamped before planning.
-    max_single_joint_step_deg: 15.0
+    max_single_joint_step_deg: 30.0
     min_feedback_motion_deg: 1.0
-    physical_motion_timeout_s: 2.0
+    physical_motion_timeout_s: 1.5
     joint1_near_sweep_rad: 1.6
     joint4_reset_rad: 0.0
+    # Joint1 covers the broadest safe sectors allowed by the URDF limits.
+    # Joint4 only selects the upper/lower viewing levels.
+    auto_horizontal_offset_rad: 2.0
+    auto_vertical_offset_rad: 0.45
 
-    # Each step should noticeably change the camera view. OpenClaw may decide
-    # the next direction, but the robot layer only accepts these bounded
-    # primitives. Up/down use joint4 first so the wrist camera tilts toward high
-    # markers instead of only translating upward while still looking forward.
+    # These deltas are used by one-step search commands. Full auto search uses
+    # the absolute sequence below, so joint1 actually traverses both sides
+    # instead of repeatedly nudging around the same point.
     direction_deltas_deg:
       left:       [12.0, 0.0, 0.0, 0.0, 0.0, 0.0]
       right:      [-12.0, 0.0, 0.0, 0.0, 0.0, 0.0]
@@ -54,16 +56,14 @@ search_marker_node:
       down_left:  [10.0, 0.0, 0.0, 10.0, 0.0, 0.0]
       down_right: [-10.0, 0.0, 0.0, 10.0, 0.0, 0.0]
 
-    # Kept for old configs/tools. Full direction=auto search now uses the
-    # joint-limit sweep described above instead of this repeated max-step list.
     auto_sequence:
-      - up
-      - left
-      - right
+      - current
       - right
       - left
       - up
-      - right
-      - left
-      - left
-      - right
+      - up_right
+      - up_left
+      - center
+      - down
+      - down_right
+      - down_left

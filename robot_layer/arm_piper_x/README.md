@@ -56,7 +56,7 @@ talk directly to CAN or expose arbitrary joint commands.
 - integrated front camera info: `/front_camera/color/camera_info`
 - integrated front point cloud: `/front_camera/depth/color/points`
 - ArUco pose: `/aruco_single/pose`
-- marker: ID `6`, size `0.03 m`
+- marker: ID `6`, size `0.06 m`
 - hand-eye calibration file:
   `/home/dase-hw101/handeye/config/piper_x_d435i_eye_in_hand.json`
 - calibrated TF parent: `front_piper_flange_link`
@@ -106,17 +106,22 @@ Their ROS services and HTTP API stay at the root namespace for OpenClaw.
 
 ## Reactive Marker Search
 
-The old calibrated 3x3 search-pose grid is replaced by bounded reactive search.
+The old calibrated 3x3 search-pose grid is replaced by a fast directional
+search. Full auto search uses the sequence `current -> right -> left -> up ->
+up_right -> up_left -> center -> down -> down_right -> down_left`. Joint1 makes
+the wide horizontal sweeps; joint4 only selects the upper/lower camera levels.
 OpenClaw may decide one direction at a time, but must call the Agent Server
-`/tools/search-step` endpoint. The robot layer executes only small configured
-MoveIt joint-delta primitives and stops as soon as marker 6 is visible.
+`/tools/search-step` endpoint. The robot layer executes configured MoveIt
+targets and stops as soon as marker 6 is visible.
 Successful `search-marker` saves the current six-joint pose as `found_marker`
 and leaves the arm at that pose.
 
 The only search-ending limit is `max_steps: 100`; there is no wall-clock search
 time limit.
 
-Allowed directions: `left`, `right`, `up`, `down`, `center`, `current`. Prefer `up` as the first step because marker 6 is usually mounted high; `up` is a bounded joint4 wrist-camera tilt.
+Allowed directions: `left`, `right`, `up`, `down`, `up_left`, `up_right`,
+`down_left`, `down_right`, `center`, `current`. Full auto search is horizontal-
+coverage-first; it no longer prioritizes joint4 upward motion.
 
 ## Official Source Boundary
 

@@ -120,6 +120,8 @@ public:
     center_step_scale_ = declare_parameter<double>("center_step_scale", 1.0);
     joint1_near_sweep_rad_ = declare_parameter<double>("joint1_near_sweep_rad", 1.6);
     joint4_reset_rad_ = declare_parameter<double>("joint4_reset_rad", 0.0);
+    auto_horizontal_offset_rad_ = declare_parameter<double>("auto_horizontal_offset_rad", 2.0);
+    auto_vertical_offset_rad_ = declare_parameter<double>("auto_vertical_offset_rad", 0.45);
     auto_sequence_ = declare_parameter<std::vector<std::string>>(
       "auto_sequence",
       std::vector<std::string>{
@@ -251,6 +253,12 @@ private:
     }
     if (!std::isfinite(center_step_scale_) || center_step_scale_ <= 0.0) {
       center_step_scale_ = 1.0;
+    }
+    if (!std::isfinite(auto_horizontal_offset_rad_) || auto_horizontal_offset_rad_ <= 0.0) {
+      auto_horizontal_offset_rad_ = 2.0;
+    }
+    if (!std::isfinite(auto_vertical_offset_rad_) || auto_vertical_offset_rad_ <= 0.0) {
+      auto_vertical_offset_rad_ = 0.45;
     }
 
     for (auto & [direction, delta] : direction_deltas_) {
@@ -993,6 +1001,97 @@ private:
     return false;
   }
 
+  bool run_direction_sequence(
+    int & steps_used,
+    std::string & found_at_pose,
+    std::string & stage,
+    std::string & message)
+  {
+    std::string joint_message;
+    const auto initial = current_joint_values(joint_message);
+    if (!initial) {
+      stage = "moveit_state";
+      message = joint_message;
+      return false;
+    }
+
+    const auto joint1_bounds = joint_bounds(0, message);
+    const auto joint4_bounds = joint_bounds(3, message);
+    if (!joint1_bounds || !joint4_bounds) {
+      stage = "moveit_bounds";
+      return false;
+    }
+
+    const double center_joint1 = std::clamp(0.0, joint1_bounds->first, joint1_bounds->second);
+    const double center_joint4 = std::clamp(
+      joint4_reset_rad_, joint4_bounds->first, joint4_bounds->second);
+    const double right_joint1 = std::clamp(
+      center_joint1 - auto_horizontal_offset_rad_, joint1_bounds->first, joint1_bounds->second);
+    const double left_joint1 = std::clamp(
+      center_joint1 + auto_horizontal_offset_rad_, joint1_bounds->first, joint1_bounds->second);
+    const double up_joint4 = std::clamp(
+      center_joint4 - auto_vertical_offset_rad_, joint4_bounds->first, joint4_bounds->second);
+    const double down_joint4 = std::clamp(
+      center_joint4 + auto_vertical_offset_rad_, joint4_bounds->first, joint4_bounds->second);
+
+    for (const auto & requested : auto_sequence_) {
+      const auto direction = normalise_direction(requested);
+      std::vector<double> target = *initial;
+      if (direction == "current") {
+        if (maybe_check_marker_after_no_motion(
+            "current", found_at_pose, stage, message))
+        {
+          return true;
+        }
+        continue;
+      }
+
+      target[0] = center_joint1;
+      target[3] = center_joint4;
+      if (direction == "right") {
+        target[0] = right_joint1;
+      } else if (direction == "left") {
+        target[0] = left_joint1;
+      } else if (direction == "up") {
+        target[3] = up_joint4;
+      } else if (direction == "up_right") {
+        target[0] = right_joint1;
+        target[3] = up_joint4;
+      } else if (direction == "up_left") {
+        target[0] = left_joint1;
+        target[3] = up_joint4;
+      } else if (direction == "center") {
+        // Keep the explicit center target for a known forward-facing view.
+      } else if (direction == "down") {
+        target[3] = down_joint4;
+      } else if (direction == "down_right") {
+        target[0] = right_joint1;
+        target[3] = down_joint4;
+      } else if (direction == "down_left") {
+        target[0] = left_joint1;
+        target[3] = down_joint4;
+      } else {
+        stage = "search_direction";
+        message = "unsupported auto search direction '" + requested + "'";
+        return false;
+      }
+
+      bool motion_ok = true;
+      if (move_target_and_allow_skips(
+          target, "auto_" + direction, steps_used, found_at_pose, stage, message, motion_ok))
+      {
+        return true;
+      }
+      if (!motion_ok) {
+        return false;
+      }
+    }
+
+    stage = "search_complete";
+    message = "marker_not_found after directional camera search sequence";
+    return false;
+  }
+
   void handle_search(
     const std::shared_ptr<piper_x_aruco_wall_approach::srv::SearchMarker::Request> request,
     std::shared_ptr<piper_x_aruco_wall_approach::srv::SearchMarker::Response> response)
@@ -1056,7 +1155,7 @@ private:
       return;
     }
 
-    const bool found = run_joint_limit_sweep(
+    const bool found = run_direction_sequence(
       steps_used, found_at_pose, response->stage, response->message);
     response->poses_checked = steps_used;
     if (found) {
@@ -1091,6 +1190,8 @@ private:
   double center_step_scale_{};
   double joint1_near_sweep_rad_{};
   double joint4_reset_rad_{};
+  double auto_horizontal_offset_rad_{};
+  double auto_vertical_offset_rad_{};
   std::vector<std::string> auto_sequence_;
   std::unordered_map<std::string, std::vector<double>> direction_deltas_;
   std::vector<double> cumulative_offset_ = std::vector<double>(kJointCount, 0.0);

@@ -143,11 +143,19 @@ readiness are not required. Require:
 ## Reactive Marker Search
 
 The old 3x3 hardcoded search-pose grid is retired. Full marker search is a
-robot-layer joint sweep, not a language-model loop. The PiPER-X robot layer
-raises joint4 while scanning left/right, then repeats that scan at joint1
-sectors: current/center, `+1.6`, positive joint1 limit, `-1.6`, and negative
-joint1 limit. If marker 6 is still not found, the robot returns joint4 and
-joint1 to zero and reports `marker_not_found`.
+fast robot-layer camera sequence, not a language-model loop. Joint1 now does
+the main horizontal coverage; joint4 only selects the upper/lower viewing
+levels. The default absolute search order is:
+
+```text
+current -> right -> left -> up -> up_right -> up_left -> center
+        -> down -> down_right -> down_left
+```
+
+The horizontal sectors use a wide bounded joint1 offset so the camera can look
+far around the Bunker. The sequence stops immediately after marker confirmation
+and saves the found pose. If marker 6 is still not found, it reports
+`marker_not_found` without looping back through the old joint4-first sweep.
 
 Use this loop when marker 6 is not visible:
 

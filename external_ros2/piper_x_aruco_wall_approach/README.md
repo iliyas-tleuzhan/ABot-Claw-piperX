@@ -229,16 +229,19 @@ ros2 run piper_x_aruco_wall_approach piper_touch_marker_client.py search --execu
 Search parameters live in `config/piper_x_search_poses.yaml`:
 
 - no hardcoded 3x3 joint-pose grid
-- full `direction=auto` search is bounded by joint limits and the finite joint1
-  sector list, not by `max_steps`
-- `settle_time_s: 0.5`
+- full `direction=auto` follows `current -> right -> left -> up -> up_right ->
+  up_left -> center -> down -> down_right -> down_left`
+- joint1 performs the wide horizontal coverage; joint4 only selects upper/lower
+  camera levels
+- `settle_time_s: 0.2`
 - `detection_window_frames: 5`
 - `required_detections: 3`
-- allowed directions: `left`, `right`, `up`, `down`, `center`, `current`
+- allowed directions: `left`, `right`, `up`, `down`, `up_left`, `up_right`,
+  `down_left`, `down_right`, `center`, `current`
 - each direction maps to a small configured six-joint delta and is planned
   through MoveIt
-- auto search raises joint4 while scanning left/right, then repeats at joint1
-  sectors: current/center, `+1.6`, positive limit, `-1.6`, and negative limit
+- auto search uses wide bounded joint1 sectors and upper/center/lower camera
+  levels instead of the old joint4-first joint-limit sweep
 
 There is no wall-clock or max-step search limit in the full ROS search loop.
 Search stops when marker 6 is confirmed or when the finite joint sweep is
