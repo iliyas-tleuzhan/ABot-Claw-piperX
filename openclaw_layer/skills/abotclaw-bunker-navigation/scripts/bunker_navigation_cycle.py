@@ -88,10 +88,17 @@ class NavigationNode(Node):
         if status:
             self.manipulation = {**event, "status": status}
 
-    def publish_landmark(self, landmark: str) -> None:
+    def publish_landmark(self, landmark: str, wait_timeout_s: float = 8.0) -> bool:
+        deadline = time.monotonic() + wait_timeout_s
+        while self.goal_pub.get_subscription_count() < 1 and time.monotonic() < deadline:
+            rclpy.spin_once(self, timeout_sec=0.2)
+        if self.goal_pub.get_subscription_count() < 1:
+            return False
         message = String()
         message.data = landmark
         self.goal_pub.publish(message)
+        rclpy.spin_once(self, timeout_sec=0.2)
+        return True
 
     def call_home_service(self, timeout_s: float) -> tuple[bool, str]:
         if not self.home_client.wait_for_service(timeout_sec=timeout_s):
@@ -218,7 +225,9 @@ def run(args: argparse.Namespace) -> int:
             if args.landmark not in {"home", "door"}:
                 emit(False, "FAILED", "unknown landmark", landmark=args.landmark)
                 return 2
-            node.publish_landmark(args.landmark)
+            if not node.publish_landmark(args.landmark):
+                emit(False, "FAILED", "landmark navigator subscriber was not discovered", landmark=args.landmark)
+                return 2
             emit(True, "NAVIGATION_STARTED", "landmark goal published; waiting for arrival event", finished=False, landmark=args.landmark)
             return 0
 
@@ -232,7 +241,9 @@ def run(args: argparse.Namespace) -> int:
             emit(False, "FAILED", "cycle prerequisites are not ready", health=health)
             return 2
 
-        node.publish_landmark("door")
+        if not node.publish_landmark("door"):
+            emit(False, "FAILED", "landmark navigator subscriber was not discovered")
+            return 2
         door = node.wait_for_door(args.timeout_s)
         if not door:
             emit(False, "FAILED", "door arrival was not confirmed")
@@ -251,7 +262,9 @@ def run(args: argparse.Namespace) -> int:
             return 4
 
         node.generic_arrival = None
-        node.publish_landmark("home")
+        if not node.publish_landmark("home"):
+            emit(False, "FAILED", "landmark navigator subscriber was not discovered")
+            return 2
         home = node.wait_for_home(args.timeout_s)
         if not home:
             emit(

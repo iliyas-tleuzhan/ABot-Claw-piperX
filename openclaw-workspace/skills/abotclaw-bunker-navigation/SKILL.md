@@ -48,8 +48,8 @@ a Lark message is a request, not proof that the robot is ready.
 
 For a simple Bunker landmark request, use the direct ROS 2 topic command below.
 Do not run the Python helper, run a full health preflight, or require Nav2
-discovery before sending it. `ros2 topic pub --once` waits for a subscriber and
-reports if the command could not be delivered.
+ discovery before sending it. Keep the publisher alive briefly so DDS can
+ deliver the one goal to the landmark subscriber.
 
 ```bash
 source /opt/ros/humble/setup.bash
@@ -59,11 +59,11 @@ export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 export ROS_LOCALHOST_ONLY=1
 
 # Bunker to the door landmark
-ros2 topic pub --once /landmark_navigator/go_marker \
+ros2 topic pub --once --keep-alive 2 /landmark_navigator/go_marker \
   std_msgs/msg/String "{data: door}"
 
 # Bunker to the home landmark
-ros2 topic pub --once /landmark_navigator/go_marker \
+ros2 topic pub --once --keep-alive 2 /landmark_navigator/go_marker \
   std_msgs/msg/String "{data: home}"
 ```
 
