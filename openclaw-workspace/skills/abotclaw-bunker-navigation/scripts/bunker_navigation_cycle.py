@@ -35,9 +35,10 @@ def status_of(event: dict[str, Any]) -> str:
     return ""
 
 
-def emit(success: bool, state: str, message: str, **details: Any) -> None:
+def emit(success: bool, state: str, message: str, finished: bool = True, **details: Any) -> None:
     print(json.dumps({
         "success": success,
+        "finished": finished,
         "state": state,
         "message": message,
         **details,
@@ -218,7 +219,7 @@ def run(args: argparse.Namespace) -> int:
                 emit(False, "FAILED", "unknown landmark", landmark=args.landmark)
                 return 2
             node.publish_landmark(args.landmark)
-            emit(True, "GOAL_SENT", "landmark goal published", landmark=args.landmark)
+            emit(True, "NAVIGATION_STARTED", "landmark goal published; waiting for arrival event", finished=False, landmark=args.landmark)
             return 0
 
         if args.command == "go-home":
