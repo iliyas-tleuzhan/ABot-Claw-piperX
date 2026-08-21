@@ -1050,10 +1050,11 @@ private:
       return false;
     }
     const double horizontal = std::abs(auto_horizontal_offset_rad_);
-    // The integrated front-arm model raises with negative J2 and positive J3.
-    // Keep both increments small; J4 compensates their net pitch change.
-    const double lift_j2 = -std::abs(vertical_lift_joint2_rad_);
-    const double lift_j3 = std::abs(vertical_lift_joint3_rad_);
+    // Preserve the previously validated lift directions: positive J2 and
+    // negative J3. Keep both increments small; J4 compensates their net pitch
+    // change.
+    const double lift_j2 = std::abs(vertical_lift_joint2_rad_);
+    const double lift_j3 = -std::abs(vertical_lift_joint3_rad_);
     const double original_j2 = std::clamp((*initial)[1], joint2_bounds->first, joint2_bounds->second);
     const double original_j3 = std::clamp((*initial)[2], joint3_bounds->first, joint3_bounds->second);
     const double original_j4 = std::clamp((*initial)[3], joint4_bounds->first, joint4_bounds->second);
@@ -1102,8 +1103,8 @@ private:
           }
           const double next_j2 = level_j2 + lift_j2;
           const double next_j3 = level_j3 + lift_j3;
-          if (next_j2 < joint2_bounds->first + min_feedback_motion_rad_ ||
-            next_j3 > joint3_bounds->second - min_feedback_motion_rad_)
+          if (next_j2 > joint2_bounds->second - min_feedback_motion_rad_ ||
+            next_j3 < joint3_bounds->first + min_feedback_motion_rad_)
           {
             break;
           }
