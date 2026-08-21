@@ -42,6 +42,17 @@ A good skill agent for this fleet should separate tasks into:
 7. **Discover before acting** — use `abotclaw-sdk-discovery` before proposing control code when the interface is not already known
 8. **Use memory when useful** — use `abotclaw-memory` when prior observations, objects, places, or semantic scenes may help the task
 
+## Bunker operation-mode rule
+
+For the integrated Bunker Mini, use `abotclaw-operation-modes` whenever a task
+crosses between navigation and manipulation. During navigation, keep both
+PiPER arms in `nav pose` because their wrist cameras contribute to mapping and
+localization. After navigation ends, retain the existing map but pause its
+updates, move both arms to `home`, and only then allow manipulation. Before
+navigation resumes, move both arms to `nav pose`, verify fresh feedback, and
+resume map updates. Never delete or rebuild the map merely because the arms
+move, and never claim a mode transition without verifying its state.
+
 ## Development Style
 
 - Reuse proven workflows where possible

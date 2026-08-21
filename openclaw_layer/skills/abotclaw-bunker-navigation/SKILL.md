@@ -65,7 +65,7 @@ topic when a required interface is missing.
 `cycle` implements:
 
 ```text
-IDLE_AT_HOME -> NAVIGATING_TO_DOOR -> MANIPULATION_RUNNING
+IDLE_AT_HOME -> NAVIGATING_TO_DOOR -> ARM_HOME_FOR_MANIPULATION -> MANIPULATION_RUNNING
 -> NAVIGATING_TO_HOME -> IDLE_AT_HOME
 ```
 
@@ -73,14 +73,19 @@ IDLE_AT_HOME -> NAVIGATING_TO_DOOR -> MANIPULATION_RUNNING
 2. Wait for `/door_navigation/arrived` with `arrived_at_door`, or generic
    `/landmark_navigator/arrived` with `landmark=door` and `status=succeeded`.
 3. Do not request manipulation before confirmed door arrival.
-4. Let `/nav2_arrival_manipulation_trigger` publish the existing
+4. Transition out of navigation: pause map updates without deleting the map,
+   then move both PiPER arms to their verified `home` poses and verify fresh
+   feedback. `home` is the manipulation-ready pose; it is not `nav pose`.
+5. Let `/nav2_arrival_manipulation_trigger` publish the existing
    `/front_piper/task/start` request. The agent does not publish a duplicate.
-5. Wait for manipulation progress. Treat `running` as active, and
+6. Wait for manipulation progress. Treat `running` as active, and
    `succeeded`, `done`, `finished`, `success`, and
    `manipulation_succeeded` as success. Treat failed, aborted, canceled, and
    rejected as failure.
-6. On success, publish `home` to `/landmark_navigator/go_marker`.
-7. Declare completion only after generic `/landmark_navigator/arrived` reports
+7. On success, move both arms to their verified `nav pose`, verify feedback,
+   resume map updates, and only then publish `home` to
+   `/landmark_navigator/go_marker`.
+8. Declare completion only after generic `/landmark_navigator/arrived` reports
    `landmark=home` and `status=succeeded`.
 
 If generic arrival is unavailable, the tool sends the home goal but returns

@@ -62,6 +62,20 @@ and MoveIt to approach a wall marker.
 
 ## Required Health Check
 
+## Operation-mode gate
+
+Direct PiPER motion is allowed only in `MANIPULATION` mode. During
+`NAVIGATION`, the wrist cameras are part of the mapping/localization system and
+both arms must remain in their verified `nav pose`; reject search, touch, home,
+teaching, gripper, and arbitrary MoveIt motion requests.
+
+After navigation reaches its goal or is explicitly stopped, the mode coordinator
+must first pause map updates without deleting the existing map, move both arms to
+their verified `home` poses, and confirm fresh joint feedback. Only then may this
+skill execute manipulation. After manipulation, both arms must reach `nav pose`
+and report fresh feedback before map updates are resumed and navigation is
+allowed again. A `home` pose is not a `nav pose`.
+
 Always call health first:
 
 ```bash
@@ -93,7 +107,7 @@ required. Require:
 The fresh-install default `go home` pose is:
 
 ```text
-[0, 0.36, 0.86, 0.56, 0, 0]
+[0, 0.36, -0.86, 0.56, 0, 0]
 ```
 
 An operator-taught runtime home pose overrides this default. This is different
