@@ -44,10 +44,18 @@ class PiperXMarkerTask:
             return base + ["home", *arm_args, "--execute" if execute else "--plan-only"]
         if self.action == "save-home":
             return base + ["save-home"]
+        if self.action == "previous":
+            return base + ["previous", *arm_args, "--execute" if execute else "--plan-only"]
+        if self.action == "save-previous":
+            return base + ["save-previous"]
         if self.action == "found-marker":
             return base + ["found-marker", *arm_args, "--execute" if execute else "--plan-only"]
         if self.action == "nav-pose":
             return base + ["nav-pose", *arm_args, "--execute" if execute else "--plan-only"]
+        if self.action == "open-gripper":
+            return base + ["open-gripper", *arm_args, "--execute" if execute else "--plan-only"]
+        if self.action == "close-gripper":
+            return base + ["close-gripper", *arm_args, "--execute" if execute else "--plan-only"]
         return base + ["health"]
 
     def shell_command(self, execute: bool = True, repo_root: str = DEFAULT_REPO_ROOT) -> str:
@@ -66,8 +74,12 @@ class PiperXMarkerTask:
                 if self.action == "search"
                 else (
                     "saved_pose_command"
-                    if self.action == "found-marker"
-                    else "geometric_surface_approach"
+                    if self.action in {"found-marker", "previous", "home", "nav-pose"}
+                    else (
+                        "gripper_width_command"
+                        if self.action in {"open-gripper", "close-gripper"}
+                        else "geometric_surface_approach"
+                    )
                 )
             ),
         }
@@ -76,14 +88,18 @@ class PiperXMarkerTask:
 def parse_task(message: str) -> PiperXMarkerTask:
     text = re.sub(r"[^a-z0-9\s-]", " ", message.lower())
     text = re.sub(r"\s+", " ", text).strip()
-    arm = "rear" if re.search(r"\b(rear|back)\b.*\b(arm|piper)\b|\b(arm|piper)\b.*\b(rear|back)\b", text) else "front"
+    arm = "front"
 
     if re.search(r"\b(save|remember|update|set)\b.*\b(home|home pose)\b", text):
         return PiperXMarkerTask("save-home", arm=arm)
+    if re.search(r"\b(save|remember|update|set)\b.*\b(previous|last)\b.*\b(pose|position)?\b", text):
+        return PiperXMarkerTask("save-previous", arm=arm)
     if re.search(r"\b(go|return|move)\b.*\b(nav|navigation)\b.*\b(pose|position)\b", text):
         return PiperXMarkerTask("nav-pose", arm=arm)
     if re.search(r"\b(go|return|move)\b.*\bhome\b", text):
         return PiperXMarkerTask("home", arm=arm)
+    if re.search(r"\b(go|return|move)\b.*\b(previous|last)\b.*\b(pose|position)?\b", text):
+        return PiperXMarkerTask("previous", arm=arm)
     if re.search(r"\b(go|return|move)\b.*\b(found|detected|saved)\b.*\b(marker|aruco)\b.*\b(pose|position|place|spot)\b", text):
         return PiperXMarkerTask("found-marker", arm=arm)
     if re.search(r"\b(go|return|move)\b.*\b(marker|aruco)\b.*\b(found|detected|saved)\b.*\b(pose|position|place|spot)\b", text):
@@ -98,6 +114,10 @@ def parse_task(message: str) -> PiperXMarkerTask:
         return PiperXMarkerTask("touch", arm=arm)
     if re.search(r"\b(approach|point|move)\b.*\b(marker|aruco|marked)\b", text):
         return PiperXMarkerTask("approach", arm=arm)
+    if re.search(r"\b(open)\b.*\b(gripper|claw)\b", text):
+        return PiperXMarkerTask("open-gripper", arm=arm)
+    if re.search(r"\b(close|shut)\b.*\b(gripper|claw)\b", text):
+        return PiperXMarkerTask("close-gripper", arm=arm)
     raise ValueError("No PiPER-X marker/home action found")
 
 
@@ -107,6 +127,22 @@ def main() -> int:
     parser.add_argument("--plan-only", action="store_true")
     parser.add_argument("--repo-root", default=DEFAULT_REPO_ROOT)
     args = parser.parse_args()
+    normalized = re.sub(r"[^a-z0-9\s-]", " ", args.message.lower())
+    if re.search(r"\b(rear|back)\b.*\b(arm|piper)\b|\b(arm|piper)\b.*\b(rear|back)\b", normalized):
+        print(
+            json.dumps(
+                {
+                    "action": "unsupported",
+                    "arm": "rear",
+                    "selected_robot": "PiPER-X",
+                    "success": False,
+                    "finished": True,
+                    "message": "rear PiPER-X is intentionally disabled in the current OpenClaw context",
+                },
+                sort_keys=True,
+            )
+        )
+        return 2
     task = parse_task(args.message)
     print(
         json.dumps(

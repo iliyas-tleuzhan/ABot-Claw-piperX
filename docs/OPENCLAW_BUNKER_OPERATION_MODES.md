@@ -70,5 +70,4 @@ The detailed OpenClaw routing rules live in:
 
 ```text
 openclaw-workspace/skills/abotclaw-operation-modes/SKILL.md
-openclaw_layer/skills/abotclaw-operation-modes/SKILL.md
 ```

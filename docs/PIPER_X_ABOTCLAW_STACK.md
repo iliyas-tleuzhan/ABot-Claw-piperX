@@ -1,26 +1,20 @@
 # PiPER-X ABot-Claw Stack
 
-This document records the ABot-Claw/OpenClaw-side split between the regular
-Piper arm and the AgileX PiPER-X arm.
+This document records the current ABot-Claw/OpenClaw routing for the
+piper-on-bunker integration.
 
 ## Current Routing
 
-Use the regular Piper stack only for the older tabletop Agent Server workflow:
-
-- repo path: `robot_layer/arm_piper`
-- service: `http://127.0.0.1:8888`
-- skills: `abotclaw-piper-manipulation`
-- purpose: regular Piper workcell pick/place
-
-Use the PiPER-X stack for the current ROS 2 marker/home workflow:
+Use the Bunker Mini plus front PiPER-X stack for the current workflow:
 
 - repo path: `robot_layer/arm_piper_x`
-- service: `http://127.0.0.1:8892`
-- skills: `abotclaw-piper-x-manipulation`, `piper-touch-marker`
-- legacy alias: `abotclaw-piper-x-moveit-aruco-touch`
-- purpose: approach marker, touch marker, save home, go home
+- OpenClaw workspace: `openclaw-workspace`
+- Agent Server: `http://127.0.0.1:8893`
+- low-level marker API: `http://127.0.0.1:8892`
+- active skills: `abotclaw-bunker-navigation`, `abotclaw-operation-modes`, `piper-touch-marker`
+- purpose: Bunker named navigation, front-arm marker search/touch, manipulation pose, nav pose, previous pose, found-marker pose
 
-Do not route PiPER-X to the regular Piper Agent Server on `8888`.
+Do not route this system to old regular Piper or legacy PiPER-X skill aliases.
 
 ## PiPER-X Robot Contract
 
@@ -32,81 +26,76 @@ robot_layer/arm_piper_x/agent_server/config/piper_x_robot_contract.yaml
 
 Important values:
 
-- ROS: Jazzy
-- driver: `agx_arm_ros`
-- launch arm type: `piper_x`
-- launch effector type: `agx_gripper`
-- launch firmware: `v189`
-- CAN: `can0`, `1000000`
+- ROS: Humble in `trystan-bunker-navigation`
+- front PiPER CAN: `can2`, `1000000`
+- rear PiPER CAN: `can3`, ignored by OpenClaw for now
+- Bunker CAN: `can4`
+- MoveIt namespace: `/front_piper`
 - MoveIt group: `arm`
-- MoveIt tip: `tcp_link`
+- MoveIt trajectory action: `/front_piper/arm_controller/follow_joint_trajectory`
+- MoveIt tip: `front_piper_flange_link`
 - TCP offset: `[0.0, 0.0, 0.1425, 0.0, 0.0, 0.0]`
-- joint feedback: `/feedback/joint_states`
-- ArUco marker: ID `6`, size `0.10 m`
+- joint feedback: `/front_piper/feedback/joint_states`
+- ArUco marker: ID `6`, size `0.06 m`
 - point cloud: `/front_camera/depth/color/points`
-
-The contract points to the installed AgileX ROS 2 sources:
-
-```text
-/home/dase-hw101/agx_arm_ws/src/agx_arm_ros
-/home/dase-hw101/agx_arm_ws/src/agx_arm_ros/src/agx_arm_description/agx_arm_urdf/piper_x
-/home/dase-hw101/agx_arm_ws/src/agx_arm_ros/src/agx_arm_moveit/config
-```
+- navigation command topic: `/landmark_navigator/go_marker`
+- arrival topics: `/door_navigation/arrived`, `/home_navigation/arrived`
+- manipulation completion topic: `/manipulation_task/finished`
 
 ## OpenClaw Skills
 
-Active workspace skills are under:
+Active workspace files are under:
 
 ```text
-/home/dase-hw101/.openclaw/workspace/skills
+openclaw-workspace/
 ```
 
-The current PiPER-X skills are:
+The current skills are:
 
 ```text
-skills/abotclaw-piper-x-manipulation/SKILL.md
+skills/abotclaw-bunker-navigation/SKILL.md
+skills/abotclaw-operation-modes/SKILL.md
 skills/piper-touch-marker/SKILL.md
-skills/abotclaw-piper-x-moveit-aruco-touch/SKILL.md
 ```
 
-`abotclaw-piper-x-moveit-aruco-touch` is now only a legacy alias that points to
-the ROS 2 `8892` API. It must not call the old `piper-pipeline-testbed` flow.
+The duplicate OpenClaw skill folder and old PiPER-X alias skills are removed.
 
 ## Commands The Skills Should Use
 
 Health:
 
 ```bash
-cd /home/dase-hw101/ABot-Claw &&
-python3 robot_layer/arm_piper_x/agent_server/run_piper_x_marker_task.py health
+curl -sS http://127.0.0.1:8893/health
 ```
 
 Approach marker:
 
 ```bash
-cd /home/dase-hw101/ABot-Claw &&
-python3 robot_layer/arm_piper_x/agent_server/run_piper_x_marker_task.py approach --execute
+curl -sS -X POST http://127.0.0.1:8893/tools/approach-marker \
+  -H 'Content-Type: application/json' \
+  -d '{"execute":true,"arm":"front"}'
 ```
 
 Touch marker, retract, then return home:
 
 ```bash
-cd /home/dase-hw101/ABot-Claw &&
-python3 robot_layer/arm_piper_x/agent_server/run_piper_x_marker_task.py touch --execute --retract --return-home-after
+curl -sS -X POST http://127.0.0.1:8893/tools/touch-marker \
+  -H 'Content-Type: application/json' \
+  -d '{"execute":true,"arm":"front"}'
 ```
 
-Save current pose as home:
+Go to nav pose:
 
 ```bash
-cd /home/dase-hw101/ABot-Claw &&
-python3 robot_layer/arm_piper_x/agent_server/run_piper_x_marker_task.py save-home
+curl -sS -X POST http://127.0.0.1:8893/tools/go-nav-pose \
+  -H 'Content-Type: application/json' \
+  -d '{"execute":true,"arm":"front"}'
 ```
 
-Go home:
+Go to Bunker door:
 
 ```bash
-cd /home/dase-hw101/ABot-Claw &&
-python3 robot_layer/arm_piper_x/agent_server/run_piper_x_marker_task.py home --execute
+ros2 topic pub --once --keep-alive 2 /landmark_navigator/go_marker std_msgs/msg/String "{data: door}"
 ```
 
 ## Safety Boundary

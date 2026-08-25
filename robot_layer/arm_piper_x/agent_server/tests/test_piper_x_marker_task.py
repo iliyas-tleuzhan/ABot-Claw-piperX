@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[4]
-PARSER = ROOT / "openclaw_layer/skills/abotclaw-piper-x-manipulation/scripts/piper_x_marker_task.py"
+PARSER = ROOT / "openclaw-workspace/skills/piper-touch-marker/scripts/piper_x_marker_task.py"
 
 
 class PiperXMarkerParserTest(unittest.TestCase):
@@ -77,11 +77,23 @@ class PiperXMarkerParserTest(unittest.TestCase):
         self.assertIn(" home ", parsed["command_text"])
 
     def test_nav_pose_routes_to_nav_pose_endpoint(self):
-        parsed = self.parse("rear arm go nav pose")
+        parsed = self.parse("front arm go nav pose")
         self.assertEqual(parsed["action"], "nav-pose")
-        self.assertEqual(parsed["arm"], "rear")
+        self.assertEqual(parsed["arm"], "front")
         self.assertIn("nav-pose", parsed["command_text"])
-        self.assertIn("--arm rear", parsed["command_text"])
+        self.assertIn("--arm front", parsed["command_text"])
+
+    def test_rear_arm_is_disabled(self):
+        result = subprocess.run(
+            [sys.executable, str(PARSER), "rear arm go nav pose", "--plan-only"],
+            text=True,
+            stdout=subprocess.PIPE,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 2)
+        parsed = json.loads(result.stdout)
+        self.assertEqual(parsed["action"], "unsupported")
+        self.assertEqual(parsed["arm"], "rear")
 
     def test_front_arm_is_default(self):
         parsed = self.parse("front arm search for the marker")
