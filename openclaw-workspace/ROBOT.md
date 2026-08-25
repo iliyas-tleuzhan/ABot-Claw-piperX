@@ -56,7 +56,7 @@ This OpenClaw workspace is for the current piper-on-bunker integration only.
 Navigation and manipulation are separate modes.
 
 - During navigation, keep the PiPER arms parked in nav pose and do not move them.
-- After navigation reaches `door` or `home`, OpenClaw reads the corresponding arrival topic.
+- After navigation reaches `door` or `home`, OpenClaw watches for one `data:true` pulse on the corresponding arrival topic. The pulse may clear after about 5 seconds; that still counts as successful arrival.
 - Before manipulation, move the front arm to manipulation pose.
 - After manipulation tasks are done, move the front arm to nav pose before starting navigation again.
 - Keep the map; do not delete or rebuild it because the arm moved.

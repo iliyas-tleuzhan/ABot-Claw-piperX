@@ -20,8 +20,8 @@ Current expected runtime heartbeat.
 
 ## Handoff Topics
 
-- `/door_navigation/arrived`: continuous Bool.
-- `/home_navigation/arrived`: continuous Bool.
+- `/door_navigation/arrived`: Bool true pulse on door arrival.
+- `/home_navigation/arrived`: Bool true pulse on home arrival.
 - `/manipulation_task/finished`: continuous Bool.
 
 If these are missing, report exactly which one is missing. Do not start duplicate drivers to compensate.

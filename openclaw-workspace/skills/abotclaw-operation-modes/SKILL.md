@@ -13,7 +13,7 @@ The current system has two modes: `NAVIGATION` and `MANIPULATION`.
 - PiPER arms must stay parked in nav pose.
 - Do not run search, touch, gripper, teaching, or arbitrary arm motion.
 - Use `/landmark_navigator/go_marker` for goals.
-- Wait on `/door_navigation/arrived` or `/home_navigation/arrived`.
+- Wait for a `data:true` pulse on `/door_navigation/arrived` or `/home_navigation/arrived`.
 
 ## MANIPULATION
 
@@ -27,7 +27,7 @@ The current system has two modes: `NAVIGATION` and `MANIPULATION`.
 
 Navigation to manipulation:
 
-1. Wait until the requested arrival topic is `data: true`.
+1. Wait until the requested arrival topic emits `data:true` at least once.
 2. Announce that navigation ended.
 3. Move the front PiPER-X to manipulation pose through `POST /tools/go-manipulation-pose`.
 4. Run the requested manipulation tasks one at a time.
@@ -40,3 +40,6 @@ Manipulation to navigation:
 3. Only then send the next Bunker navigation goal.
 
 `/manipulation_task/finished=true` means one API request returned. It does not mean manipulation mode is over.
+
+Door/home arrival topics are pulse events. A later `data:false` does not undo
+an already observed arrival.

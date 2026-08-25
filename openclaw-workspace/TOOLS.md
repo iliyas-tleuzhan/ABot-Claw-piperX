@@ -28,7 +28,9 @@ Arrival topics:
 /home_navigation/arrived    std_msgs/msg/Bool
 ```
 
-`data: true` means Nav2 reached that landmark.
+`data: true` means Nav2 reached that landmark. The true value is a short pulse,
+currently about 5 seconds, so treat a single observed true as success even if
+the topic returns to false afterward.
 
 ## Front PiPER-X APIs
 

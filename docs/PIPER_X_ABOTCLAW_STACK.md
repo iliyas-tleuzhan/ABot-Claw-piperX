@@ -39,7 +39,7 @@ Important values:
 - ArUco marker: ID `6`, size `0.06 m`
 - point cloud: `/front_camera/depth/color/points`
 - navigation command topic: `/landmark_navigator/go_marker`
-- arrival topics: `/door_navigation/arrived`, `/home_navigation/arrived`
+- arrival topics: `/door_navigation/arrived`, `/home_navigation/arrived`; each emits a short `data:true` pulse on successful arrival
 - manipulation completion topic: `/manipulation_task/finished`
 
 ## OpenClaw Skills
