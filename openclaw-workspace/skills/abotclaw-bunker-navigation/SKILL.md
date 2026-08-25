@@ -29,8 +29,7 @@ Named navigation inputs:
 Arrival and handoff inputs:
 
 ```text
-/door_navigation/arrived               std_msgs/msg/String
-/landmark_navigator/arrived            std_msgs/msg/String JSON
+/door_navigation/arrived               std_msgs/msg/Bool
 /manipulation_task/progress             std_msgs/msg/String
 /navigation_manipulation/progress       std_msgs/msg/String JSON
 ```
@@ -93,8 +92,8 @@ IDLE_AT_HOME -> NAVIGATING_TO_DOOR -> ARM_HOME_FOR_MANIPULATION -> MANIPULATION_
 ```
 
 1. Report `navigation starting`, then publish `door` to `/landmark_navigator/go_marker`.
-2. Wait for `/door_navigation/arrived` with `arrived_at_door`, or generic
-   `/landmark_navigator/arrived` with `landmark=door` and `status=succeeded`.
+2. Wait for `/door_navigation/arrived` with `data: true`. A `false` message
+   means navigation has not ended; do not start manipulation.
 3. Do not request manipulation before confirmed door arrival.
 4. Report `navigation ended`. Transition out of navigation: pause map updates
    without deleting the map, then move both PiPER arms to their verified
@@ -110,8 +109,9 @@ IDLE_AT_HOME -> NAVIGATING_TO_DOOR -> ARM_HOME_FOR_MANIPULATION -> MANIPULATION_
 7. On success, report `manipulation ended`, move both arms to their verified `nav pose`, verify feedback,
    resume map updates, and only then publish `home` to
    `/landmark_navigator/go_marker`.
-8. Declare completion only after generic `/landmark_navigator/arrived` reports
-   `landmark=home` and `status=succeeded`.
+8. The current Boolean handoff only reports door arrival. After publishing the
+   home goal, report that the home goal was sent, but do not claim confirmed
+   home arrival unless Trystan adds a separate home-completion signal.
 
 If generic arrival is unavailable, the tool sends the home goal but returns
 `HOME_ARRIVAL_UNCONFIRMED`; it never claims the cycle completed based on logs.

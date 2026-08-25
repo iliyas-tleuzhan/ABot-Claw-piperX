@@ -72,9 +72,9 @@ MANIPULATION --manipulation complete--> NAVIGATION
 7. Mark the system `MANIPULATION`.
 8. Only then allow PiPER manipulation tools.
 
-For the normal door workflow, the `/door_navigation/arrived` or generic
-`/landmark_navigator/arrived` success event is the transition trigger. Do not
-start manipulation merely because a goal was sent.
+For the normal door workflow, `/door_navigation/arrived` with `data=true` is
+the transition trigger. A `data=false` message means navigation has not ended.
+Do not start manipulation merely because a goal was sent.
 
 ### Manipulation to navigation
 

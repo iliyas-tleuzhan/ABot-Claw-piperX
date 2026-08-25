@@ -11,7 +11,7 @@ from typing import Any
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import Bool, String
 from std_srvs.srv import Trigger
 
 
@@ -55,13 +55,9 @@ class NavigationNode(Node):
             Trigger, "/landmark_navigator/go_home"
         )
         self.door_arrival: dict[str, Any] | None = None
-        self.generic_arrival: dict[str, Any] | None = None
         self.manipulation: dict[str, Any] | None = None
         self.create_subscription(
-            String, "/door_navigation/arrived", self._door_callback, 10
-        )
-        self.create_subscription(
-            String, "/landmark_navigator/arrived", self._arrival_callback, 10
+            Bool, "/door_navigation/arrived", self._door_callback, 10
         )
         for topic in (
             "/manipulation_task/progress",
@@ -69,24 +65,35 @@ class NavigationNode(Node):
         ):
             self.create_subscription(String, topic, self._progress_callback, 10)
 
-    def _door_callback(self, message: String) -> None:
-        if message.data.strip() == "arrived_at_door":
+    def _door_callback(self, message: Bool) -> None:
+        if message.data:
             self.door_arrival = {
                 "landmark": "door",
                 "status": "succeeded",
-                "legacy": True,
+                "arrived": True,
             }
-
-    def _arrival_callback(self, message: String) -> None:
-        event = decode(message.data)
-        if event.get("landmark") in {"door", "home"}:
-            self.generic_arrival = event
+            self.get_logger().info(
+                "Navigation ended: /door_navigation/arrived=true; "
+                "door goal confirmed."
+            )
+        else:
+            self.door_arrival = None
+            self.get_logger().info(
+                "Navigation active: /door_navigation/arrived=false; "
+                "waiting for door arrival."
+            )
 
     def _progress_callback(self, message: String) -> None:
         event = decode(message.data)
         status = status_of(event)
         if status:
             self.manipulation = {**event, "status": status}
+            self.get_logger().info(
+                "Manipulation status: %s%s" % (
+                    status,
+                    f"; {event}" if len(event) > 1 else "",
+                )
+            )
 
     def publish_landmark(self, landmark: str, wait_timeout_s: float = 8.0) -> bool:
         deadline = time.monotonic() + wait_timeout_s
@@ -97,6 +104,9 @@ class NavigationNode(Node):
         message = String()
         message.data = landmark
         self.goal_pub.publish(message)
+        self.get_logger().info(
+            "Nav2 goal published: /landmark_navigator/go_marker=%s" % landmark
+        )
         rclpy.spin_once(self, timeout_sec=0.2)
         return True
 
@@ -110,6 +120,10 @@ class NavigationNode(Node):
         if not future.done() or future.result() is None:
             return False, "landmark_navigator/go_home service timed out"
         response = future.result()
+        self.get_logger().info(
+            "Home service response: success=%s message=%s" %
+            (response.success, response.message)
+        )
         return bool(response.success), response.message
 
     def health(self, discovery_timeout_s: float = 8.0) -> dict[str, Any]:
@@ -149,7 +163,6 @@ class NavigationNode(Node):
             "progress_topics_visible": sorted(progress_topics & topics),
             "progress_topic_missing": not bool(progress_topics & topics),
             "go_home_service_visible": "/landmark_navigator/go_home" in services,
-            "generic_arrival_visible": "/landmark_navigator/arrived" in topics,
             "landmark_navigator_node_visible": "landmark_navigator" in nodes,
             "nav2_nodes_visible": sorted(
                 name for name in (
@@ -176,7 +189,7 @@ class NavigationNode(Node):
         result["ready_for_navigation"] = result["command_ready"]
         result["ready_for_cycle"] = (
             result["nav2_stack_ready"]
-            and (result["generic_arrival_visible"] or result["door_arrival_visible"])
+            and result["door_arrival_visible"]
             and not result["progress_topic_missing"]
         )
         return result
@@ -187,11 +200,6 @@ class NavigationNode(Node):
             rclpy.spin_once(self, timeout_sec=0.2)
             if self.door_arrival:
                 return self.door_arrival
-            event = self.generic_arrival
-            if event and event.get("landmark") == "door":
-                status = status_of(event)
-                if status == "succeeded" or status in FAILURE:
-                    return event
         return None
 
     def wait_for_manipulation(self, timeout_s: float) -> dict[str, Any] | None:
@@ -203,12 +211,10 @@ class NavigationNode(Node):
         return None
 
     def wait_for_home(self, timeout_s: float) -> dict[str, Any] | None:
-        deadline = time.monotonic() + timeout_s
-        while time.monotonic() < deadline:
-            rclpy.spin_once(self, timeout_sec=0.2)
-            event = self.generic_arrival
-            if event and event.get("landmark") == "home":
-                return event
+        self.get_logger().info(
+            "Home goal sent; /door_navigation/arrived only confirms door "
+            "arrival, so home completion has no dedicated event."
+        )
         return None
 
 
@@ -241,6 +247,8 @@ def run(args: argparse.Namespace) -> int:
             emit(False, "FAILED", "cycle prerequisites are not ready", health=health)
             return 2
 
+        node.get_logger().info("Navigation starting: sending door landmark goal.")
+        node.door_arrival = None
         if not node.publish_landmark("door"):
             emit(False, "FAILED", "landmark navigator subscriber was not discovered")
             return 2
@@ -252,6 +260,9 @@ def run(args: argparse.Namespace) -> int:
             emit(False, "FAILED", "navigation to door failed", arrival=door)
             return 3
 
+        node.get_logger().info(
+            "Navigation ended: door arrival confirmed; handing off to manipulation."
+        )
         node.manipulation = None
         manipulation = node.wait_for_manipulation(args.timeout_s)
         if not manipulation:
@@ -261,21 +272,22 @@ def run(args: argparse.Namespace) -> int:
             emit(False, "FAILED", "manipulation failed", progress=manipulation)
             return 4
 
-        node.generic_arrival = None
+        node.get_logger().info(
+            "Manipulation ended: sending home navigation goal."
+        )
         if not node.publish_landmark("home"):
             emit(False, "FAILED", "landmark navigator subscriber was not discovered")
             return 2
         home = node.wait_for_home(args.timeout_s)
         if not home:
             emit(
-                False,
-                "HOME_ARRIVAL_UNCONFIRMED",
-                "home goal sent but generic home arrival was not confirmed",
+                True,
+                "HOME_GOAL_SENT",
+                "home goal sent; /door_navigation/arrived only reports door "
+                "arrival, so home completion is not confirmed",
+                finished=False,
             )
-            return 5
-        if status_of(home) in FAILURE:
-            emit(False, "FAILED", "navigation to home failed", arrival=home)
-            return 3
+            return 0
         emit(
             True,
             "IDLE_AT_HOME",
