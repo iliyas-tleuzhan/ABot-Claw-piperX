@@ -20,8 +20,9 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from rclpy.action import ActionClient
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import JointState, PointCloud2
-from std_msgs.msg import String
+from std_msgs.msg import Bool
 from geometry_msgs.msg import PoseStamped
 from std_srvs.srv import SetBool
 from trajectory_msgs.msg import JointTrajectoryPoint
@@ -217,7 +218,10 @@ class HealthSnapshot:
 
 
 class RosMarkerTaskAdapter:
-    def emit_progress(self, event: str, **fields: Any) -> None:
+    def begin_task(self) -> None:
+        return None
+
+    def end_task(self) -> None:
         return None
 
     def health(self) -> HealthSnapshot:
@@ -285,7 +289,16 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         self.trajectory_action = trajectory_action
         self.enable_service = enable_service
         self.command_joint_prefix = str(command_joint_prefix or "front_piper_")
-        self._progress_publisher = self.create_publisher(String, "/manipulation_task/progress", 10)
+        self._task_state_lock = threading.Lock()
+        self._active_task_count = 0
+        self._finished_state = False
+        self._finished_qos = QoSProfile(depth=1)
+        self._finished_qos.reliability = ReliabilityPolicy.RELIABLE
+        self._finished_publisher = self.create_publisher(
+            Bool, "/manipulation_task/finished", self._finished_qos
+        )
+        self._publish_finished(False)
+        self.create_timer(0.5, self._republish_finished)
         self.controller_manager_service = (
             controller_manager_service
             or controller_manager_service_from_action(self.trajectory_action)
@@ -344,9 +357,25 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
                     10,
                 )
 
-    def emit_progress(self, event: str, **fields: Any) -> None:
-        payload = {"event": event, "status": fields.pop("status", "running"), **fields}
-        self._progress_publisher.publish(String(data=json.dumps(payload, separators=(",", ":"))))
+    def _publish_finished(self, finished: bool) -> None:
+        self._finished_state = bool(finished)
+        message = Bool()
+        message.data = self._finished_state
+        self._finished_publisher.publish(message)
+
+    def _republish_finished(self) -> None:
+        with self._task_state_lock:
+            self._publish_finished(self._finished_state)
+
+    def begin_task(self) -> None:
+        with self._task_state_lock:
+            self._active_task_count += 1
+            self._publish_finished(False)
+
+    def end_task(self) -> None:
+        with self._task_state_lock:
+            self._active_task_count = max(0, self._active_task_count - 1)
+            self._publish_finished(self._active_task_count == 0)
 
     def _client_for_arm(self, arm: str):
         selected = normalize_arm(arm)
@@ -1085,7 +1114,14 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
 
     @app.middleware("http")
     async def add_command_completion_fields(request: Request, call_next):
-        response = await call_next(request)
+        is_task_request = request.url.path.startswith("/tools/")
+        if is_task_request:
+            adapter.begin_task()
+        try:
+            response = await call_next(request)
+        finally:
+            if is_task_request:
+                adapter.end_task()
         if not request.url.path.startswith("/tools/"):
             return response
         body = b"".join([chunk async for chunk in response.body_iterator])
@@ -1156,23 +1192,8 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
         """Park the selected arm in its manipulation pose before any task motion."""
         if not execute:
             return None
-        adapter.emit_progress(
-            "manipulation_pose_starting",
-            status="running",
-            task="manipulation_pose",
-            arm=arm,
-            finished=False,
-        )
         result = adapter.go_home(HomeRequest(execute=True, arm=arm, duration_s=6.0))
         if not result.get("success", False):
-            adapter.emit_progress(
-                "manipulation_pose_ended",
-                status="failed",
-                task="manipulation_pose",
-                arm=arm,
-                success=False,
-                finished=True,
-            )
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail={
@@ -1182,14 +1203,6 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
                     "manipulation_pose": result,
                 },
             )
-        adapter.emit_progress(
-            "manipulation_pose_ended",
-            status="succeeded",
-            task="manipulation_pose",
-            arm=arm,
-            success=True,
-            finished=True,
-        )
         return result
 
     def require_approach_readiness(health_snapshot: HealthSnapshot) -> None:
@@ -1227,7 +1240,6 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
 
     def run_endpoint(mode: str, request: MarkerTaskRequest) -> Dict[str, Any]:
         validate_request(mode, request)
-        adapter.emit_progress("manipulation_starting", status="running", task=mode, arm=request.arm, finished=False)
         health_snapshot = adapter.health()
         if request.execute and not health_snapshot.execution_allowed:
             raise HTTPException(
@@ -1271,14 +1283,6 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
                 result["manipulation_pose"] = manipulation_pose_result
             if previous_saved is not None:
                 result["previous_pose_saved_before_motion"] = previous_saved
-            adapter.emit_progress(
-                "manipulation_ended",
-                status="succeeded" if result.get("success", False) else "failed",
-                task=mode,
-                arm=request.arm,
-                success=bool(result.get("success", False)),
-                finished=True,
-            )
             if result.get("success", False) and request.execute and request.return_home_after:
                 home_result = adapter.go_home(HomeRequest(execute=True, arm=request.arm, duration_s=request.home_duration_s))
                 result["return_home_after"] = home_result
@@ -1324,7 +1328,6 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
                 detail="physical execution is disabled; set PIPER_TOUCH_ALLOW_EXECUTION=1",
             )
         require_search_readiness(health_snapshot)
-        adapter.emit_progress("manipulation_starting", status="running", task="search", arm=request.arm, finished=False)
         if not command_lock.acquire(blocking=False):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="another PiPER marker task is active")
         try:
@@ -1332,14 +1335,6 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
                 ensure_request_arm_enabled(request.arm)
             require_search_readiness(adapter.health())
             manipulation_pose_result = prepare_manipulation_pose(request.arm, request.execute)
-            if manipulation_pose_result is not None:
-                adapter.emit_progress(
-                    "manipulation_starting",
-                    status="running",
-                    task="search",
-                    arm=request.arm,
-                    finished=False,
-                )
             result = adapter.search_marker(request)
             if manipulation_pose_result is not None:
                 result["manipulation_pose"] = manipulation_pose_result
@@ -1359,14 +1354,6 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=detail) from exc
         finally:
             command_lock.release()
-        adapter.emit_progress(
-            "manipulation_ended",
-            status="succeeded" if result.get("success", False) else "failed",
-            task="search",
-            arm=request.arm,
-            success=bool(result.get("success", False)),
-            finished=True,
-        )
         if (
             not result.get("success", False)
             and result.get("stage") not in {"search_complete", "marker_not_found"}
@@ -1375,7 +1362,6 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
         return result
 
     def run_save_home_endpoint(request: SaveHomeRequest) -> Dict[str, Any]:
-        adapter.emit_progress("manipulation_starting", status="running", task="save_manipulation_pose", finished=False)
         if request.pose_name not in {"home", "manipulation_pose"}:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="pose_name must be 'manipulation_pose' (legacy alias: 'home')")
         health_snapshot = adapter.health()
@@ -1389,7 +1375,6 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
         finally:
             command_lock.release()
-        adapter.emit_progress("manipulation_ended", status="succeeded" if result.get("success", False) else "failed", task="save_manipulation_pose", success=bool(result.get("success", False)), finished=True)
         if not result.get("success", False):
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=result)
         return result
@@ -1412,7 +1397,6 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
 
     def run_home_endpoint(request: HomeRequest) -> Dict[str, Any]:
         validate_home_request(request)
-        adapter.emit_progress("manipulation_starting", status="running", task="manipulation_pose", arm=request.arm, finished=False)
         health_snapshot = adapter.health()
         if request.execute and not health_snapshot.execution_allowed:
             raise HTTPException(
@@ -1440,14 +1424,12 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
         finally:
             command_lock.release()
-        adapter.emit_progress("manipulation_ended", status="succeeded" if result.get("success", False) else "failed", task="manipulation_pose", arm=request.arm, success=bool(result.get("success", False)), finished=True)
         if not result.get("success", False):
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=result)
         return result
 
     def run_previous_endpoint(request: HomeRequest) -> Dict[str, Any]:
         validate_home_request(request)
-        adapter.emit_progress("manipulation_starting", status="running", task="previous_pose", arm=request.arm, finished=False)
         health_snapshot = adapter.health()
         if request.execute and not health_snapshot.execution_allowed:
             raise HTTPException(
@@ -1472,14 +1454,12 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
         finally:
             command_lock.release()
-        adapter.emit_progress("manipulation_ended", status="succeeded" if result.get("success", False) else "failed", task="previous_pose", arm=request.arm, success=bool(result.get("success", False)), finished=True)
         if not result.get("success", False):
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=result)
         return result
 
     def run_found_marker_endpoint(request: HomeRequest) -> Dict[str, Any]:
         validate_home_request(request)
-        adapter.emit_progress("manipulation_starting", status="running", task="found_marker_pose", arm=request.arm, finished=False)
         health_snapshot = adapter.health()
         if request.execute and not health_snapshot.execution_allowed:
             raise HTTPException(
@@ -1499,14 +1479,12 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
         finally:
             command_lock.release()
-        adapter.emit_progress("manipulation_ended", status="succeeded" if result.get("success", False) else "failed", task="found_marker_pose", arm=request.arm, success=bool(result.get("success", False)), finished=True)
         if not result.get("success", False):
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=result)
         return result
 
     def run_nav_pose_endpoint(request: HomeRequest) -> Dict[str, Any]:
         validate_home_request(request)
-        adapter.emit_progress("manipulation_starting", status="running", task="nav_pose", arm=request.arm, finished=False)
         health_snapshot = adapter.health()
         if request.execute and not health_snapshot.execution_allowed:
             raise HTTPException(
@@ -1529,7 +1507,6 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
         finally:
             command_lock.release()
-        adapter.emit_progress("manipulation_ended", status="succeeded" if result.get("success", False) else "failed", task="nav_pose", arm=request.arm, success=bool(result.get("success", False)), finished=True)
         if not result.get("success", False):
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=result)
         return result

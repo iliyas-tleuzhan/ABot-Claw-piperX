@@ -172,9 +172,9 @@ Use this loop when marker 6 is not visible:
 5. Stop immediately when marker 6 is found.
 6. Report every response's `success` and `finished` fields. `finished:false`
    means the task is still active; do not issue a second motion command. The
-   `/manipulation_task/progress` topic emits `manipulation_starting` and
-   `manipulation_ended` events. Relay those events to the user while the
-   command runs.
+   `/manipulation_task/finished` is `false` while the task is active and
+   `true` when that individual task returns. Use the tool response to decide
+   whether the task succeeded; completion does not end manipulation mode.
 
 Example one-step command:
 

@@ -79,8 +79,10 @@ Reactive search loop:
 3. If marker is hidden, acquire a lease and call `/tools/search-marker` with `direction:"auto"`.
 4. Re-check health/result after the search returns.
 5. Stop immediately when `marker_found: true` or `marker_visible: true`.
-6. Relay `/manipulation_task/progress` events and every response's `success`
-   and `finished` fields. Do not issue another motion while `finished:false`.
+6. Wait for `/manipulation_task/finished=true` after the task returns. Use the
+   API response's `success`, `marker_found`, and `stage` fields to decide the
+   result; the Boolean only reports task completion. Do not issue another
+   motion while it is `false`.
 
 Search one step:
 

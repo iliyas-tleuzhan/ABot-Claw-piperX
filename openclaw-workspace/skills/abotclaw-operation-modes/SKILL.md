@@ -124,10 +124,11 @@ Never infer `map_updates=paused` just because the Bunker is stationary. Never
 infer `front_arm_at_nav_pose=true` from a command response without fresh joint
 feedback.
 
-While a command is running, relay progress events such as `checking marker`,
-`search step started`, `navigation ended`, `manipulation starting`, and
-`manipulation ended`. Every tool result must expose `success` and `finished`;
-never start a second motion while `finished=false`.
+While a command is running, use the tool response and
+`/manipulation_task/finished`. The Boolean only says that the current
+individual task returned; use the tool's `success` and task-specific fields to
+decide what to do next. It does not end manipulation mode. Never start a
+second motion while `/manipulation_task/finished=false`.
 
 When a transition cannot be verified, report the exact missing state and do not
 send the next physical command. In particular, do not claim that the map was

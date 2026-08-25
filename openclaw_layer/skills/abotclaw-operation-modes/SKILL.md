@@ -73,8 +73,10 @@ MANIPULATION --manipulation complete--> NAVIGATION
 8. Only then allow PiPER manipulation tools.
 
 For the normal door workflow, `/door_navigation/arrived` with `data=true` is
-the transition trigger. A `data=false` message means navigation has not ended.
-Do not start manipulation merely because a goal was sent.
+the transition trigger. `/manipulation_task/finished=true` only means that an
+individual PiPER task returned; OpenClaw uses its task response to decide
+whether manipulation mode continues. Do not start manipulation merely because
+a goal was sent.
 
 ### Manipulation to navigation
 
