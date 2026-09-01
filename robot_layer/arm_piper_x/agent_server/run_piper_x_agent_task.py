@@ -14,14 +14,20 @@ from urllib import error, request
 DEFAULT_BASE_URL = "http://127.0.0.1:8893"
 
 
-def request_json(method: str, url: str, payload: Optional[Dict[str, Any]] = None) -> tuple[int, Dict[str, Any]]:
+def request_json(
+    method: str,
+    url: str,
+    payload: Optional[Dict[str, Any]] = None,
+    timeout_s: Optional[float] = 180.0,
+) -> tuple[int, Dict[str, Any]]:
     data = None if payload is None else json.dumps(payload).encode("utf-8")
     headers = {"Accept": "application/json"}
     if payload is not None:
         headers["Content-Type"] = "application/json"
     req = request.Request(url, data=data, headers=headers, method=method)
     try:
-        with request.urlopen(req, timeout=180.0) as resp:
+        response_context = request.urlopen(req) if timeout_s is None else request.urlopen(req, timeout=timeout_s)
+        with response_context as resp:
             body = resp.read().decode("utf-8")
             return resp.status, json.loads(body) if body else {}
     except error.HTTPError as exc:
@@ -241,10 +247,18 @@ def main() -> int:
                     "POST",
                     f"{base_url}/tools/search-marker",
                     {"execute": args.execute, "lease_id": args.lease_id, "arm": args.arm},
+                    timeout_s=None,
                 )
             )
         endpoint = "approach-marker" if args.command == "approach" else "touch-marker"
-        return print_result(*request_json("POST", f"{base_url}/tools/{endpoint}", marker_payload(args)))
+        return print_result(
+            *request_json(
+                "POST",
+                f"{base_url}/tools/{endpoint}",
+                marker_payload(args),
+                timeout_s=None,
+            )
+        )
     finally:
         if owned_lease_id:
             release_lease(base_url, owned_lease_id)

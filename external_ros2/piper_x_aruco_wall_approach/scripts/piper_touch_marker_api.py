@@ -24,7 +24,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import JointState, PointCloud2
 from std_msgs.msg import Bool
 from geometry_msgs.msg import PoseStamped
-from std_srvs.srv import SetBool
+from std_srvs.srv import Empty, SetBool
 from trajectory_msgs.msg import JointTrajectoryPoint
 import uvicorn
 
@@ -90,6 +90,16 @@ def controller_manager_service_from_action(action_name: str) -> str:
     return f"{namespace}/controller_manager/list_hardware_components"
 
 
+def nav_pose_mapping_settle_s() -> float:
+    try:
+        value = float(os.environ.get("PIPER_X_NAV_POSE_MAPPING_SETTLE_S", "1.0"))
+    except ValueError:
+        return 1.0
+    if not math.isfinite(value):
+        return 1.0
+    return max(0.0, min(value, 10.0))
+
+
 def execution_allowed_from_env() -> bool:
     return os.environ.get("PIPER_TOUCH_ALLOW_EXECUTION", "").strip().lower() in {"1", "true"}
 
@@ -115,13 +125,17 @@ class SearchMarkerRequest(BaseModel):
     execute: bool = False
     arm: str = Field(default="front")
     direction: str = Field(default="auto")
-    max_steps: int = Field(default=100)
+    max_steps: int = Field(default=0)
 
 
 class HomeRequest(BaseModel):
     execute: bool = False
     arm: str = Field(default="front")
     duration_s: float = Field(default=6.0)
+
+
+class ClearActiveTasksRequest(BaseModel):
+    clear_command_lock: bool = False
 
 
 class SaveHomeRequest(BaseModel):
@@ -257,6 +271,34 @@ class RosMarkerTaskAdapter:
     def save_found_marker(self) -> Dict[str, Any]:
         raise NotImplementedError
 
+    def active_task_status(self) -> Dict[str, Any]:
+        return {"active_task_count": 0, "finished": True}
+
+    def clear_active_tasks(self) -> Dict[str, Any]:
+        return {
+            "success": True,
+            "stage": "active_tasks_cleared",
+            "message": "no ROS task bookkeeping was active",
+            "active_task_count": 0,
+            "finished": True,
+        }
+
+    def pause_mapping_for_manipulation(self) -> Dict[str, Any]:
+        return {
+            "success": False,
+            "available": False,
+            "service": "/rtabmap/pause",
+            "message": "ROS adapter not initialized",
+        }
+
+    def resume_mapping_for_navigation(self) -> Dict[str, Any]:
+        return {
+            "success": False,
+            "available": False,
+            "service": "/rtabmap/resume",
+            "message": "ROS adapter not initialized",
+        }
+
 
 class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
     def __init__(
@@ -326,6 +368,8 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         self._client = self.create_client(RunMarkerTask, "/run_marker_task")
         self._search_client = self.create_client(SearchMarker, "/search_marker")
         self._enable_client = self.create_client(SetBool, self.enable_service)
+        self._rtabmap_pause_client = self.create_client(Empty, "/rtabmap/pause")
+        self._rtabmap_resume_client = self.create_client(Empty, "/rtabmap/resume")
         self._hardware_client = (
             self.create_client(ListHardwareComponents, self.controller_manager_service)
             if ListHardwareComponents is not None
@@ -367,6 +411,38 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         with self._task_state_lock:
             self._publish_finished(self._finished_state)
 
+    def _call_empty_service_if_available(self, client, service_name: str) -> Dict[str, Any]:
+        if not client.wait_for_service(timeout_sec=0.2):
+            return {
+                "success": False,
+                "available": False,
+                "service": service_name,
+                "message": f"{service_name} service unavailable",
+            }
+        future = client.call_async(Empty.Request())
+        deadline = time.monotonic() + 1.0
+        while rclpy.ok() and not future.done() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        if not future.done():
+            return {
+                "success": False,
+                "available": True,
+                "service": service_name,
+                "message": f"timed out waiting for {service_name}",
+            }
+        return {
+            "success": future.result() is not None,
+            "available": True,
+            "service": service_name,
+            "message": f"called {service_name}",
+        }
+
+    def pause_mapping_for_manipulation(self) -> Dict[str, Any]:
+        return self._call_empty_service_if_available(self._rtabmap_pause_client, "/rtabmap/pause")
+
+    def resume_mapping_for_navigation(self) -> Dict[str, Any]:
+        return self._call_empty_service_if_available(self._rtabmap_resume_client, "/rtabmap/resume")
+
     def begin_task(self) -> None:
         with self._task_state_lock:
             self._active_task_count += 1
@@ -376,6 +452,27 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         with self._task_state_lock:
             self._active_task_count = max(0, self._active_task_count - 1)
             self._publish_finished(self._active_task_count == 0)
+
+    def active_task_status(self) -> Dict[str, Any]:
+        with self._task_state_lock:
+            return {
+                "active_task_count": self._active_task_count,
+                "finished": self._finished_state,
+            }
+
+    def clear_active_tasks(self) -> Dict[str, Any]:
+        with self._task_state_lock:
+            previous_count = self._active_task_count
+            self._active_task_count = 0
+            self._publish_finished(True)
+            return {
+                "success": True,
+                "stage": "active_tasks_cleared",
+                "message": "cleared in-memory PiPER marker task bookkeeping",
+                "previous_active_task_count": previous_count,
+                "active_task_count": self._active_task_count,
+                "finished": self._finished_state,
+            }
 
     def _client_for_arm(self, arm: str):
         selected = normalize_arm(arm)
@@ -705,11 +802,8 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         service_request.retract_after = request.retract_after
 
         future = self._client.call_async(service_request)
-        deadline = time.monotonic() + 120.0
-        while rclpy.ok() and not future.done() and time.monotonic() < deadline:
+        while rclpy.ok() and not future.done():
             time.sleep(0.05)
-        if not future.done():
-            raise TimeoutError("timed out waiting for /run_marker_task response")
         response = future.result()
         if response is None:
             raise RuntimeError("ROS service /run_marker_task returned no response")
@@ -762,11 +856,8 @@ class MarkerTaskBridge(Node, RosMarkerTaskAdapter):
         service_request.direction = request.direction
         service_request.max_steps = request.max_steps
         future = self._search_client.call_async(service_request)
-        deadline = time.monotonic() + 180.0
-        while rclpy.ok() and not future.done() and time.monotonic() < deadline:
+        while rclpy.ok() and not future.done():
             time.sleep(0.05)
-        if not future.done():
-            raise TimeoutError("timed out waiting for /search_marker response")
         response = future.result()
         if response is None:
             raise RuntimeError("ROS service /search_marker returned no response")
@@ -1114,7 +1205,10 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
 
     @app.middleware("http")
     async def add_command_completion_fields(request: Request, call_next):
-        is_task_request = request.url.path.startswith("/tools/")
+        is_task_request = (
+            request.url.path.startswith("/tools/")
+            and not request.url.path.endswith("/clear-active-tasks")
+        )
         if is_task_request:
             adapter.begin_task()
         try:
@@ -1188,6 +1282,19 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
         if not health_snapshot.joint_state_available:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="fresh joint state unavailable")
 
+    def release_command_lock() -> bool:
+        try:
+            command_lock.release()
+            return True
+        except RuntimeError:
+            return False
+
+    def command_lock_status() -> Dict[str, Any]:
+        acquired = command_lock.acquire(blocking=False)
+        if acquired:
+            command_lock.release()
+        return {"command_lock_active": not acquired}
+
     def prepare_manipulation_pose(arm: str, execute: bool) -> Optional[Dict[str, Any]]:
         """Park the selected arm in its manipulation pose before any task motion."""
         if not execute:
@@ -1233,6 +1340,61 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
     def health(_: None = Depends(require_auth)) -> Dict[str, Any]:
         return adapter.health().as_dict()
 
+    @app.post("/tools/piper/clear-active-tasks")
+    def clear_active_tasks(
+        request: ClearActiveTasksRequest,
+        _: None = Depends(require_auth),
+    ) -> Dict[str, Any]:
+        before_tasks = adapter.active_task_status()
+        lock_state = command_lock_status()
+        forced_lock_release = False
+        lock_release_error = None
+        if lock_state["command_lock_active"]:
+            if not request.clear_command_lock:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "success": False,
+                        "stage": "command_lock_active",
+                        "message": (
+                            "a PiPER marker command lock is active; retry with "
+                            "clear_command_lock=true only after confirming no arm motion is still running"
+                        ),
+                        "active_tasks_before": before_tasks,
+                        **lock_state,
+                    },
+                )
+            try:
+                forced_lock_release = release_command_lock()
+                if not forced_lock_release:
+                    raise RuntimeError("command lock was already released")
+            except RuntimeError as exc:
+                lock_release_error = str(exc)
+        clear_result = adapter.clear_active_tasks()
+        after_lock_state = command_lock_status()
+        return {
+            "success": lock_release_error is None,
+            "finished": True,
+            "stage": "active_tasks_cleared" if lock_release_error is None else "command_lock_clear_error",
+            "message": (
+                "cleared active PiPER marker task bookkeeping"
+                if lock_release_error is None
+                else f"active task bookkeeping cleared, but command lock release failed: {lock_release_error}"
+            ),
+            "active_tasks_before": before_tasks,
+            "active_tasks_after": clear_result,
+            "command_lock_before": lock_state,
+            "command_lock_after": after_lock_state,
+            "forced_command_lock_release": forced_lock_release,
+            "ros_nodes_stopped": False,
+            "ros_services_stopped": False,
+            "note": (
+                "This endpoint only clears in-process API task bookkeeping and the API command lock. "
+                "It does not kill or restart search_marker_node, wall_approach_node, MoveIt, drivers, "
+                "camera nodes, or RTAB-Map."
+            ),
+        }
+
     def ensure_request_arm_enabled(arm: str) -> Dict[str, Any]:
         if hasattr(adapter, "ensure_selected_arm_enabled"):
             return adapter.ensure_selected_arm_enabled(arm)  # type: ignore[attr-defined]
@@ -1249,6 +1411,7 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
         if not command_lock.acquire(blocking=False):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="another PiPER marker task is active")
         try:
+            mapping_pause_result = adapter.pause_mapping_for_manipulation() if request.execute else None
             arm_enable_result = ensure_request_arm_enabled(request.arm) if request.execute else None
             manipulation_pose_result = prepare_manipulation_pose(request.arm, request.execute)
             health_snapshot = adapter.health()
@@ -1283,6 +1446,8 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
                 result["manipulation_pose"] = manipulation_pose_result
             if previous_saved is not None:
                 result["previous_pose_saved_before_motion"] = previous_saved
+            if mapping_pause_result is not None:
+                result["mapping_pause"] = mapping_pause_result
             if result.get("success", False) and request.execute and request.return_home_after:
                 home_result = adapter.go_home(HomeRequest(execute=True, arm=request.arm, duration_s=request.home_duration_s))
                 result["return_home_after"] = home_result
@@ -1303,7 +1468,7 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
         except Exception as exc:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
         finally:
-            command_lock.release()
+            release_command_lock()
         if (
             not result.get("success", False)
             and result.get("stage") not in {"search_complete", "marker_not_found"}
@@ -1331,11 +1496,14 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
         if not command_lock.acquire(blocking=False):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="another PiPER marker task is active")
         try:
+            mapping_pause_result = adapter.pause_mapping_for_manipulation() if request.execute else None
             if request.execute:
                 ensure_request_arm_enabled(request.arm)
             require_search_readiness(adapter.health())
             manipulation_pose_result = prepare_manipulation_pose(request.arm, request.execute)
             result = adapter.search_marker(request)
+            if mapping_pause_result is not None:
+                result["mapping_pause"] = mapping_pause_result
             if manipulation_pose_result is not None:
                 result["manipulation_pose"] = manipulation_pose_result
             if result.get("success", False) and result.get("marker_found", False):
@@ -1353,7 +1521,7 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
                 detail["search_result"] = result
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=detail) from exc
         finally:
-            command_lock.release()
+            release_command_lock()
         if (
             not result.get("success", False)
             and result.get("stage") not in {"search_complete", "marker_not_found"}
@@ -1374,7 +1542,7 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
         except Exception as exc:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
         finally:
-            command_lock.release()
+            release_command_lock()
         if not result.get("success", False):
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=result)
         return result
@@ -1390,7 +1558,7 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
         except Exception as exc:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
         finally:
-            command_lock.release()
+            release_command_lock()
         if not result.get("success", False):
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=result)
         return result
@@ -1423,7 +1591,7 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
         except Exception as exc:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
         finally:
-            command_lock.release()
+            release_command_lock()
         if not result.get("success", False):
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=result)
         return result
@@ -1453,7 +1621,7 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
         except Exception as exc:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
         finally:
-            command_lock.release()
+            release_command_lock()
         if not result.get("success", False):
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=result)
         return result
@@ -1478,7 +1646,7 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
         except Exception as exc:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
         finally:
-            command_lock.release()
+            release_command_lock()
         if not result.get("success", False):
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=result)
         return result
@@ -1496,17 +1664,32 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
         try:
             arm_enable_result = ensure_request_arm_enabled(request.arm) if request.execute else None
             previous_saved = adapter.save_previous() if request.execute and normalize_arm(request.arm) == "front" else None
+            mapping_pause_result = adapter.pause_mapping_for_manipulation() if request.execute else None
             result = adapter.go_nav_pose(request)
+            mapping_settle_s = nav_pose_mapping_settle_s() if request.execute and result.get("success", False) else 0.0
+            if mapping_settle_s > 0.0:
+                time.sleep(mapping_settle_s)
+            mapping_resume_result = (
+                adapter.resume_mapping_for_navigation()
+                if request.execute and result.get("success", False)
+                else None
+            )
             if arm_enable_result is not None:
                 result["arm_enable"] = arm_enable_result
             if previous_saved is not None:
                 result["previous_pose_saved_before_motion"] = previous_saved
+            if mapping_pause_result is not None:
+                result["mapping_pause_before_nav_pose"] = mapping_pause_result
+            if request.execute:
+                result["mapping_resume_after_nav_pose_settle_s"] = mapping_settle_s
+            if mapping_resume_result is not None:
+                result["mapping_resume_after_nav_pose"] = mapping_resume_result
         except TimeoutError as exc:
             raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
         finally:
-            command_lock.release()
+            release_command_lock()
         if not result.get("success", False):
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=result)
         return result
@@ -1622,7 +1805,7 @@ def create_app(adapter: RosMarkerTaskAdapter, api_token: Optional[str] = None) -
         except Exception as exc:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
         finally:
-            command_lock.release()
+            release_command_lock()
         if not result.get("success", False):
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=result)
         return result

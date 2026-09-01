@@ -1,14 +1,15 @@
 # PiPER-X reactive marker-search configuration.
 #
 # Search uses continuous ArUco subscription while MoveIt is moving. The auto
-# pattern scans right/left, looks up with joint4, looks up-left, returns joint4
-# down, then lifts with the coupled joint2/joint3 pair. It repeats the height
-# sweep through joint1 sectors and keeps cycling until the marker is found or
-# the request is cancelled. One-step search remains available for diagnostics.
+# pattern scans max-positive joint1, +90 deg, 0 deg, -90 deg, then max-negative
+# joint1. At each sector it scans right/left, looks up with joint4, looks
+# up-left, returns joint4 down, then lifts with the coupled joint2/joint3 pair.
+# It keeps cycling until the marker is found or the request is cancelled.
+# One-step search remains available for diagnostics.
 #
 # Defaults:
 # - Front PiPER-X arm CAN: can2, configured by Trystan's integrated driver.
-# - Marker: ArUco ID 6, size 0.03 m, configured by launch/API layer.
+# - Marker: ArUco ID 6, size 0.06 m, configured by launch/API layer.
 # - Camera: RealSense D435i wrist camera, observed through /aruco_single/pose.
 # - MoveIt: existing /front_piper namespace with the front-only `arm` group.
 # - Full-system TF: base_link -> front_piper_flange_link ->
@@ -25,10 +26,10 @@ search_marker_node:
     # Zero means continue the complete sector/height pattern until marker found.
     # A positive value is retained as an explicit operator override.
     max_steps: 0
-    # Search motion should be visibly quicker than final touch/approach motion.
-    # These apply only to the search_marker_node MoveIt group.
-    velocity_scaling: 0.70
-    acceleration_scaling: 0.55
+    # Search motion is deliberately moderate because ArUco detection runs while
+    # the wrist camera is moving; slower motion reduces blur and missed frames.
+    velocity_scaling: 0.30
+    acceleration_scaling: 0.20
     planning_time: 3.0
     planning_attempts: 3
 
@@ -42,12 +43,12 @@ search_marker_node:
     # Joint1 covers the broadest safe sectors allowed by the URDF limits.
     # Joint4 only selects the upper/lower viewing levels.
     auto_horizontal_offset_rad: 0.55
-    auto_vertical_offset_rad: 0.35
+    auto_vertical_offset_rad: 0.525
     # Preserve the validated lift direction: J2 positive, J3 negative.
     # Small unequal increments avoid the previous oversized motion;
     # the node uses their net pitch change to compensate J4.
-    vertical_lift_joint2_rad: 0.05
-    vertical_lift_joint3_rad: 0.08
+    vertical_lift_joint2_rad: 0.075
+    vertical_lift_joint3_rad: 0.12
 
     # These deltas are used by one-step search commands. Full auto search uses
     # the absolute sequence below, so joint1 actually traverses both sides

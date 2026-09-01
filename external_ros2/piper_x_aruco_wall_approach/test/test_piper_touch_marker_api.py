@@ -185,6 +185,24 @@ class FakeAdapter(api.RosMarkerTaskAdapter):
             "positions_rad": [0.0, 0.1, -0.2, 0.3, 0.4, 0.5],
         }
 
+    def pause_mapping_for_manipulation(self):
+        self.calls.append(("pause-mapping", None))
+        return {
+            "success": True,
+            "available": True,
+            "service": "/rtabmap/pause",
+            "message": "called /rtabmap/pause",
+        }
+
+    def resume_mapping_for_navigation(self):
+        self.calls.append(("resume-mapping", None))
+        return {
+            "success": True,
+            "available": True,
+            "service": "/rtabmap/resume",
+            "message": "called /rtabmap/resume",
+        }
+
 
 def client(adapter, token=None):
     return TestClient(api.create_app(adapter, api_token=token))
@@ -416,6 +434,27 @@ def test_successful_mocked_nav_pose_rear():
     assert adapter.calls[0][0] == "nav-pose"
 
 
+def test_nav_pose_execute_pauses_until_after_motion_before_resuming_mapping(monkeypatch):
+    monkeypatch.setenv("PIPER_TOUCH_ALLOW_EXECUTION", "1")
+    monkeypatch.setenv("PIPER_X_NAV_POSE_MAPPING_SETTLE_S", "0")
+    adapter = FakeAdapter(
+        health=api.HealthSnapshot(True, True, True, True, True, True, True, 6, 0.06, True)
+    )
+    response = client(adapter).post("/tools/piper/go-nav-pose", json={"execute": True, "arm": "front"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["mapping_pause_before_nav_pose"]["service"] == "/rtabmap/pause"
+    assert body["mapping_resume_after_nav_pose"]["service"] == "/rtabmap/resume"
+    assert body["mapping_resume_after_nav_pose_settle_s"] == 0.0
+    assert [call[0] for call in adapter.calls] == [
+        "enable-arm",
+        "save-previous",
+        "pause-mapping",
+        "nav-pose",
+        "resume-mapping",
+    ]
+
+
 def test_successful_mocked_save_home():
     adapter = FakeAdapter()
     response = client(adapter).post("/tools/piper/save-home", json={"pose_name": "home"})
@@ -576,6 +615,55 @@ def test_concurrent_request_returns_409():
     first.join()
     assert second.status_code == 409
     assert 200 in statuses
+
+
+def test_clear_active_tasks_reports_clean_state():
+    response = client(FakeAdapter()).post("/tools/piper/clear-active-tasks", json={})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["stage"] == "active_tasks_cleared"
+    assert body["active_tasks_after"]["active_task_count"] == 0
+    assert body["command_lock_after"]["command_lock_active"] is False
+    assert body["ros_nodes_stopped"] is False
+    assert body["ros_services_stopped"] is False
+
+
+def test_clear_active_tasks_requires_explicit_force_for_command_lock():
+    adapter = FakeAdapter(delay_s=0.25)
+    app_client = client(adapter)
+
+    first = threading.Thread(
+        target=lambda: app_client.post("/tools/piper/touch-marker", json={})
+    )
+    first.start()
+    time.sleep(0.05)
+    response = app_client.post("/tools/piper/clear-active-tasks", json={})
+    first.join()
+    assert response.status_code == 409
+    assert response.json()["detail"]["stage"] == "command_lock_active"
+
+
+def test_force_clear_active_tasks_does_not_stop_ros_nodes():
+    adapter = FakeAdapter(delay_s=0.25)
+    app_client = client(adapter)
+
+    first = threading.Thread(
+        target=lambda: app_client.post("/tools/piper/touch-marker", json={})
+    )
+    first.start()
+    time.sleep(0.05)
+    response = app_client.post(
+        "/tools/piper/clear-active-tasks",
+        json={"clear_command_lock": True},
+    )
+    first.join()
+    assert response.status_code == 200
+    body = response.json()
+    assert body["stage"] == "active_tasks_cleared"
+    assert body["forced_command_lock_release"] is True
+    assert body["ros_nodes_stopped"] is False
+    assert body["ros_services_stopped"] is False
 
 
 def test_contact_is_never_force_confirmed():

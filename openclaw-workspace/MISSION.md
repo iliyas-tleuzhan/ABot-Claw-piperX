@@ -45,6 +45,8 @@ Manipulation mode:
 - Use only the front PiPER-X Agent Server tools.
 - `/manipulation_task/finished=true` means one manipulation API request returned. It does not say whether the task succeeded; use the tool response for success/failure.
 - Before returning to navigation, move the front arm to nav pose.
+- Mapping must remain paused until the nav-pose API reports completion; it
+  handles RTAB-Map resume after the arm reaches nav pose and settles.
 
 ## Response Style
 

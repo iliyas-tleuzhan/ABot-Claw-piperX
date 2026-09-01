@@ -8,7 +8,7 @@ import urllib.error
 import urllib.request
 
 
-def request_json(method, url, payload=None, token=None):
+def request_json(method, url, payload=None, token=None, timeout_s=120.0):
     data = None if payload is None else json.dumps(payload).encode("utf-8")
     headers = {"Accept": "application/json"}
     if payload is not None:
@@ -17,7 +17,12 @@ def request_json(method, url, payload=None, token=None):
         headers["Authorization"] = f"Bearer {token}"
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(request, timeout=120.0) as response:
+        response_context = (
+            urllib.request.urlopen(request)
+            if timeout_s is None
+            else urllib.request.urlopen(request, timeout=timeout_s)
+        )
+        with response_context as response:
             body = response.read().decode("utf-8")
             return response.status, json.loads(body)
     except urllib.error.HTTPError as exc:
@@ -163,6 +168,7 @@ def main():
                 f"{base_url}/tools/piper/search-marker",
                 payload={"execute": args.execute, "arm": args.arm},
                 token=args.token,
+                timeout_s=None,
             )
         )
     endpoint = "approach-marker" if args.command == "approach" else "touch-marker"
@@ -172,6 +178,7 @@ def main():
             f"{base_url}/tools/piper/{endpoint}",
             payload=task_payload(args),
             token=args.token,
+            timeout_s=None,
         )
     )
 

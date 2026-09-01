@@ -102,6 +102,16 @@ class FakeSdk:
         self.calls.append(("save-found-marker", {}))
         return 200, {"success": True, "stage": "complete", "message": "found marker pose saved"}
 
+    def clear_active_tasks(self, payload):
+        self.calls.append(("clear-active-tasks", payload))
+        return 200, {
+            "success": True,
+            "finished": True,
+            "stage": "active_tasks_cleared",
+            "message": "cleared active PiPER marker task bookkeeping",
+            "active_tasks_after": {"active_task_count": 0, "finished": True},
+        }
+
     def validate_pose_payload(self, payload):
         return True, "ok"
 
@@ -329,6 +339,13 @@ class PiperXAgentServerTest(unittest.TestCase):
         result = client.post("/tools/save-found-marker", json={})
         self.assertEqual(result.status_code, 200)
         self.assertEqual(sdk.calls[0][0], "save-found-marker")
+
+    def test_clear_active_piper_tasks_proxies_without_lease(self):
+        client, sdk, _env, _state = make_client()
+        result = client.post("/tools/clear-active-piper-tasks", json={"clear_command_lock": True})
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.json()["stage"], "active_tasks_cleared")
+        self.assertEqual(sdk.calls[0], ("clear-active-tasks", {"clear_command_lock": True}))
 
     def test_open_gripper_plan_only_reports_command_without_publish(self):
         client, _sdk, _env, state = make_client()

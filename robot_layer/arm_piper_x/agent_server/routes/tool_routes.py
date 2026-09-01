@@ -37,6 +37,10 @@ class HomeRequest(BaseModel):
     duration_s: float = Field(default=6.0)
 
 
+class ClearActiveTasksRequest(BaseModel):
+    clear_command_lock: bool = False
+
+
 class SaveHomeRequest(BaseModel):
     pose_name: str = Field(default="home")
 
@@ -255,6 +259,14 @@ def create_router(cfg, sdk, lease_mgr, state_monitor) -> APIRouter:
         normalized = _normalize_marker_api_response(status_code, result)
         if not normalized.get("success", False):
             raise HTTPException(status_code=422 if status_code < 400 else status_code, detail=normalized)
+        return normalized
+
+    @router.post("/clear-active-piper-tasks")
+    def clear_active_piper_tasks(req: ClearActiveTasksRequest):
+        status_code, result = sdk.clear_active_tasks(req.model_dump())
+        normalized = _normalize_marker_api_response(status_code, result)
+        if not normalized.get("success", False):
+            raise HTTPException(status_code=409 if status_code < 400 else status_code, detail=normalized)
         return normalized
 
     @router.post("/save-home")

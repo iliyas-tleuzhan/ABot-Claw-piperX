@@ -59,7 +59,15 @@ curl -sS -X POST http://127.0.0.1:8893/tools/go-manipulation-pose -H 'Content-Ty
 curl -sS -X POST http://127.0.0.1:8893/tools/go-nav-pose -H 'Content-Type: application/json' -d '{"execute":true,"arm":"front"}'
 curl -sS -X POST http://127.0.0.1:8893/tools/go-previous -H 'Content-Type: application/json' -d '{"execute":true,"arm":"front"}'
 curl -sS -X POST http://127.0.0.1:8893/tools/go-found-marker -H 'Content-Type: application/json' -d '{"execute":true,"arm":"front"}'
+curl -sS -X POST http://127.0.0.1:8893/tools/clear-active-piper-tasks -H 'Content-Type: application/json' -d '{"clear_command_lock":false}'
 ```
+
+`go-nav-pose` owns the mapping handoff: it pauses RTAB-Map while the arm moves,
+waits for the nav-pose trajectory to complete and settle, then resumes RTAB-Map.
+Do not call `/rtabmap/resume` separately before this command returns.
+
+Search, touch, and search-then-touch do not have a fixed timeout. They may run
+until marker 6 is found or the operator explicitly cancels/stops the command.
 
 Manipulation completion topic:
 
@@ -68,6 +76,15 @@ Manipulation completion topic:
 ```
 
 `true` means one PiPER API request returned. Use the API JSON to decide whether it succeeded.
+
+If a command is rejected as `another PiPER marker task is active`, call
+`/tools/clear-active-piper-tasks`. Use `clear_command_lock:true` only after
+confirming no arm motion is still active.
+
+Do not use force cleanup to kill or restart `8892`, `8893`,
+`search_marker_node`, `wall_approach_node`, MoveIt, arm drivers, camera nodes,
+TF publishers, or RTAB-Map. If a ROS service is missing, report the exact
+missing service so the owner can restart that specific visible pane.
 
 ## Do Not Start Duplicates
 

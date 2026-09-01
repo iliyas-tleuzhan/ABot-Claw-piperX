@@ -19,6 +19,7 @@ def request_json(
     url: str,
     payload: Optional[Dict[str, Any]] = None,
     token: Optional[str] = None,
+    timeout_s: Optional[float] = 180.0,
 ) -> tuple[int, Dict[str, Any]]:
     data = None if payload is None else json.dumps(payload).encode("utf-8")
     headers = {"Accept": "application/json"}
@@ -28,7 +29,8 @@ def request_json(
         headers["Authorization"] = f"Bearer {token}"
     req = request.Request(url, data=data, headers=headers, method=method)
     try:
-        with request.urlopen(req, timeout=180.0) as resp:
+        response_context = request.urlopen(req) if timeout_s is None else request.urlopen(req, timeout=timeout_s)
+        with response_context as resp:
             body = resp.read().decode("utf-8")
             return resp.status, json.loads(body) if body else {}
     except error.HTTPError as exc:
@@ -188,6 +190,7 @@ def main() -> int:
                 f"{base_url}/tools/piper/search-marker",
                 payload={"execute": args.execute, "arm": args.arm},
                 token=args.token,
+                timeout_s=None,
             )
         )
 
@@ -198,6 +201,7 @@ def main() -> int:
             f"{base_url}/tools/piper/{endpoint}",
             payload=task_payload(args),
             token=args.token,
+            timeout_s=None,
         )
     )
 

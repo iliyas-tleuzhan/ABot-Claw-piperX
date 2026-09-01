@@ -481,9 +481,27 @@ pkill -f lifecycle_manager || true
 pkill -f nav2_cmd_vel_safety_mux || true
 ```
 
-## Kill PiPER-X Manipulation / ABotClaw Processes
+## Clear Stuck PiPER API Task State
 
-Run this inside `iliyas-abot` when you want to stop the PiPER-X manipulation stack, Agent Server, and OpenClaw gateway.
+Use this when the API reports `another PiPER marker task is active` but the
+operator confirms the arm is no longer moving. This clears only API
+bookkeeping. It does not kill or restart ROS nodes, MoveIt, drivers, cameras,
+TF publishers, RTAB-Map, `search_marker_node`, or `wall_approach_node`.
+
+```bash
+curl -sS -X POST http://127.0.0.1:8893/tools/clear-active-piper-tasks \
+  -H 'Content-Type: application/json' \
+  -d '{"clear_command_lock":true}' | python3 -m json.tool
+```
+
+If a ROS service is still missing after this, restart only that specific owner
+pane. Do not run the full shutdown blocks below as part of force cleanup.
+
+## Manual Full Shutdown For PiPER-X Manipulation / ABotClaw
+
+Run this only when you intentionally want to stop the full PiPER-X manipulation
+stack, Agent Server, and OpenClaw gateway. This is not a recovery step for
+`clear-active-piper-tasks`.
 
 ```bash
 pkill -f "openclaw gateway" || true

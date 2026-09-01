@@ -59,4 +59,9 @@ Navigation and manipulation are separate modes.
 - After navigation reaches `door` or `home`, OpenClaw watches for one `data:true` pulse on the corresponding arrival topic. The pulse may clear after about 5 seconds; that still counts as successful arrival.
 - Before manipulation, move the front arm to manipulation pose.
 - After manipulation tasks are done, move the front arm to nav pose before starting navigation again.
+- Do not resume RTAB-Map while the front arm is still moving to nav pose. The
+  nav-pose API resumes mapping only after the trajectory completes and the arm
+  has settled.
+- Force cleanup only clears Agent/Marker API bookkeeping. It must not kill or
+  restart ROS nodes, MoveIt, cameras, drivers, TF publishers, or RTAB-Map.
 - Keep the map; do not delete or rebuild it because the arm moved.

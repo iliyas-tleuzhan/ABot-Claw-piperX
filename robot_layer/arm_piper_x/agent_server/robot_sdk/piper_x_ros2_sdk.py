@@ -15,7 +15,13 @@ class PiperXAgentSdk:
         self.timeout_s = float(timeout_s)
         self.token = os.environ.get("PIPER_TOUCH_API_TOKEN", "").strip() or None
 
-    def _request(self, method: str, path: str, payload: Optional[Dict[str, Any]] = None) -> tuple[int, Dict[str, Any]]:
+    def _request(
+        self,
+        method: str,
+        path: str,
+        payload: Optional[Dict[str, Any]] = None,
+        timeout_s: Optional[float] = None,
+    ) -> tuple[int, Dict[str, Any]]:
         body = None if payload is None else json.dumps(payload).encode("utf-8")
         headers = {"Accept": "application/json"}
         if payload is not None:
@@ -24,7 +30,12 @@ class PiperXAgentSdk:
             headers["Authorization"] = f"Bearer {self.token}"
         req = request.Request(f"{self.base_url}{path}", data=body, headers=headers, method=method)
         try:
-            with request.urlopen(req, timeout=self.timeout_s) as response:
+            timeout = self.timeout_s if timeout_s is None else timeout_s
+            if timeout <= 0:
+                response_context = request.urlopen(req)
+            else:
+                response_context = request.urlopen(req, timeout=timeout)
+            with response_context as response:
                 raw = response.read().decode("utf-8", errors="replace")
                 return response.status, json.loads(raw) if raw else {}
         except error.HTTPError as exc:
@@ -41,13 +52,23 @@ class PiperXAgentSdk:
         return self._request("GET", "/health")[1]
 
     def approach_marker(self, payload: dict) -> tuple[int, dict]:
-        return self._request("POST", "/tools/piper/approach-marker", payload)
+        return self._request("POST", "/tools/piper/approach-marker", payload, timeout_s=0.0)
 
     def touch_marker(self, payload: dict) -> tuple[int, dict]:
-        return self._request("POST", "/tools/piper/touch-marker", payload)
+        return self._request("POST", "/tools/piper/touch-marker", payload, timeout_s=0.0)
 
     def search_marker(self, payload: dict) -> tuple[int, dict]:
-        return self._request("POST", "/tools/piper/search-marker", payload)
+        wait_forever = (
+            bool(payload.get("execute", False))
+            and int(payload.get("max_steps", 0) or 0) == 0
+            and str(payload.get("direction", "auto")).strip().lower() in {"", "auto", "reactive"}
+        )
+        return self._request(
+            "POST",
+            "/tools/piper/search-marker",
+            payload,
+            timeout_s=0.0 if wait_forever else None,
+        )
 
     def search_step(self, payload: dict) -> tuple[int, dict]:
         return self._request("POST", "/tools/piper/search-step", payload)
@@ -72,6 +93,9 @@ class PiperXAgentSdk:
 
     def save_found_marker(self) -> tuple[int, dict]:
         return self._request("POST", "/tools/piper/save-found-marker", {})
+
+    def clear_active_tasks(self, payload: dict) -> tuple[int, dict]:
+        return self._request("POST", "/tools/piper/clear-active-tasks", payload)
 
     @staticmethod
     def validate_pose_payload(payload: dict) -> tuple[bool, str]:

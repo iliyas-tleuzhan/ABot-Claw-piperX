@@ -17,6 +17,7 @@
 #include <moveit_msgs/msg/collision_object.hpp>
 #include <moveit_msgs/msg/constraints.hpp>
 #include <moveit_msgs/msg/joint_constraint.hpp>
+#include <moveit_msgs/msg/robot_state.hpp>
 #include <pcl/ModelCoefficients.h>
 #include <pcl/filters/filter.h>
 #include <pcl/point_cloud.h>
@@ -24,6 +25,7 @@
 #include <pcl/segmentation/sac_segmentation.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/msg/joint_state.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <shape_msgs/msg/solid_primitive.hpp>
 #include <std_srvs/srv/trigger.hpp>
@@ -68,17 +70,19 @@ Eigen::Vector3d rotate_vector(
 class WallApproachNode : public rclcpp::Node
 {
 public:
-  WallApproachNode()
-  : Node("wall_approach_node"), tf_buffer_(this->get_clock()), tf_listener_(tf_buffer_)
+  explicit WallApproachNode(const rclcpp::NodeOptions & options = rclcpp::NodeOptions())
+  : Node("wall_approach_node", options), tf_buffer_(this->get_clock()), tf_listener_(tf_buffer_)
   {
     aruco_pose_topic_ = declare_parameter<std::string>("aruco_pose_topic", "/aruco_single/pose");
     point_cloud_topic_ = declare_parameter<std::string>(
       "point_cloud_topic", "/front_camera/depth/color/points");
+    joint_state_topic_ = declare_parameter<std::string>("joint_state_topic", "joint_states");
     planning_group_ = declare_parameter<std::string>("planning_group", "arm");
     move_group_namespace_ = declare_parameter<std::string>("move_group_namespace", "");
     planning_scene_ = std::make_unique<moveit::planning_interface::PlanningSceneInterface>(
       move_group_namespace_);
     end_effector_link_ = declare_parameter<std::string>("end_effector_link", "tcp_link");
+    end_effector_contact_offset_ = declare_parameter<double>("end_effector_contact_offset", 0.0);
     base_frame_ = declare_parameter<std::string>("base_frame", "base_link");
     clearance_ = declare_parameter<double>("clearance", 0.05);
     crop_width_ = declare_parameter<double>("crop_width", 0.30);
@@ -104,7 +108,7 @@ public:
     prefer_elbow_motion_ = declare_parameter<bool>("prefer_elbow_motion", true);
     joint1_name_ = declare_parameter<std::string>("joint1_name", "joint1");
     joint1_planning_tolerances_rad_ = declare_parameter<std::vector<double>>(
-      "joint1_planning_tolerances_rad", std::vector<double>{0.03, 0.06, 0.10, 0.15});
+      "joint1_planning_tolerances_rad", std::vector<double>{});
     normalise_joint1_tolerances();
 
     target_publisher_ = create_publisher<geometry_msgs::msg::PoseStamped>(
@@ -127,6 +131,13 @@ public:
         std::lock_guard<std::mutex> lock(data_mutex_);
         cloud_ = *message;
       });
+    joint_state_subscription_ = create_subscription<sensor_msgs::msg::JointState>(
+      joint_state_topic_, rclcpp::SensorDataQoS(),
+      [this](sensor_msgs::msg::JointState::ConstSharedPtr message) {
+        std::lock_guard<std::mutex> lock(data_mutex_);
+        last_joint_state_ = *message;
+        last_joint_received_ = now();
+      });
     service_ = create_service<std_srvs::srv::Trigger>(
       "/run_wall_approach",
       std::bind(&WallApproachNode::run, this, std::placeholders::_1, std::placeholders::_2));
@@ -142,6 +153,7 @@ public:
 
   void initialise_moveit()
   {
+    ensure_default_kinematics_parameters();
     moveit::planning_interface::MoveGroupInterface::Options options(
       planning_group_, "robot_description", move_group_namespace_);
     move_group_ = std::make_unique<moveit::planning_interface::MoveGroupInterface>(
@@ -156,12 +168,31 @@ public:
     move_group_->setGoalOrientationTolerance(goal_orientation_tolerance_);
     RCLCPP_INFO(
       get_logger(),
-      "MoveIt ready: group=%s, namespace=%s, tip=%s, frame=%s, execute=%s, prefer_elbow_motion=%s",
-      planning_group_.c_str(), move_group_namespace_.c_str(), end_effector_link_.c_str(), base_frame_.c_str(),
+      "MoveIt ready: group=%s, namespace=%s, tip=%s, contact_offset=%.4f m, frame=%s, "
+      "execute=%s, prefer_elbow_motion=%s",
+      planning_group_.c_str(), move_group_namespace_.c_str(), end_effector_link_.c_str(),
+      end_effector_contact_offset_, base_frame_.c_str(),
       execute_ ? "true" : "false", prefer_elbow_motion_ ? "true" : "false");
   }
 
 private:
+  template<typename ParameterT>
+  void declare_if_missing(const std::string & name, const ParameterT & value)
+  {
+    if (!has_parameter(name)) {
+      declare_parameter<ParameterT>(name, value);
+    }
+  }
+
+  void ensure_default_kinematics_parameters()
+  {
+    const std::string prefix = "robot_description_kinematics." + planning_group_ + ".";
+    declare_if_missing(prefix + "kinematics_solver", "kdl_kinematics_plugin/KDLKinematicsPlugin");
+    declare_if_missing(prefix + "kinematics_solver_search_resolution", 0.005);
+    declare_if_missing(prefix + "kinematics_solver_timeout", 0.05);
+    declare_if_missing(prefix + "kinematics_solver_attempts", 3);
+  }
+
   void normalise_joint1_tolerances()
   {
     std::vector<double> filtered;
@@ -169,9 +200,6 @@ private:
       if (std::isfinite(tolerance) && tolerance > 0.0) {
         filtered.push_back(tolerance);
       }
-    }
-    if (filtered.empty()) {
-      filtered = {0.03, 0.06, 0.10, 0.15};
     }
     std::sort(filtered.begin(), filtered.end());
     filtered.erase(std::unique(filtered.begin(), filtered.end()), filtered.end());
@@ -182,23 +210,57 @@ private:
     const std::string & joint_name,
     std::string & error)
   {
-    if (!move_group_) {
-      error = "MoveIt interface is not ready";
+    sensor_msgs::msg::JointState joint_state;
+    if (!latest_joint_state(joint_state, error)) {
       return std::nullopt;
     }
-    const auto joint_names = move_group_->getJointNames();
-    const auto joint_values = move_group_->getCurrentJointValues();
-    if (joint_names.size() != joint_values.size()) {
-      error = "MoveIt joint name/value sizes differ";
+    if (joint_state.name.empty() || joint_state.position.size() < joint_state.name.size()) {
+      error = "cached joint state on " + joint_state_topic_ + " has invalid name/position fields";
       return std::nullopt;
     }
-    for (std::size_t index = 0; index < joint_names.size(); ++index) {
-      if (joint_names[index] == joint_name) {
-        return joint_values[index];
+    for (std::size_t index = 0; index < joint_state.name.size(); ++index) {
+      if (joint_state.name[index] == joint_name) {
+        return joint_state.position[index];
       }
     }
-    error = "MoveIt current state does not contain " + joint_name;
+    error = "cached joint state on " + joint_state_topic_ + " does not contain " + joint_name;
     return std::nullopt;
+  }
+
+  bool latest_joint_state(sensor_msgs::msg::JointState & joint_state, std::string & error)
+  {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    if (!last_joint_state_) {
+      error = "No joint state received on " + joint_state_topic_;
+      return false;
+    }
+    if (last_joint_received_) {
+      const double age_s = (now() - *last_joint_received_).seconds();
+      if (age_s > 2.5) {
+        std::ostringstream stream;
+        stream << "Joint state on " << joint_state_topic_ << " is stale: " << age_s << " s";
+        error = stream.str();
+        return false;
+      }
+    }
+    joint_state = *last_joint_state_;
+    return true;
+  }
+
+  void set_start_state_from_cached_joints()
+  {
+    sensor_msgs::msg::JointState joint_state;
+    std::string error;
+    if (!latest_joint_state(joint_state, error)) {
+      RCLCPP_WARN(
+        get_logger(), "Falling back to MoveIt current-state monitor for start state: %s",
+        error.c_str());
+      move_group_->setStartStateToCurrentState();
+      return;
+    }
+    moveit_msgs::msg::RobotState start_state;
+    start_state.joint_state = joint_state;
+    move_group_->setStartState(start_state);
   }
 
   moveit_msgs::msg::Constraints joint1_path_constraint(
@@ -222,7 +284,7 @@ private:
     const geometry_msgs::msg::PoseStamped & target,
     moveit::planning_interface::MoveGroupInterface::Plan & plan)
   {
-    move_group_->setStartStateToCurrentState();
+    set_start_state_from_cached_joints();
     move_group_->setPoseTarget(target, end_effector_link_);
     const auto plan_result = move_group_->plan(plan);
     move_group_->clearPoseTargets();
@@ -377,16 +439,24 @@ private:
     geometry_msgs::msg::PoseStamped target;
     target.header.stamp = now();
     target.header.frame_id = base_frame_;
-    const Eigen::Vector3d position = to_eigen(marker.pose.position) + normal * clearance;
+    const double effective_clearance = clearance + std::max(0.0, end_effector_contact_offset_);
+    const Eigen::Vector3d position = to_eigen(marker.pose.position) + normal * effective_clearance;
     target.pose.position.x = position.x();
     target.pose.position.y = position.y();
     target.pose.position.z = position.z();
 
-    // tcp_link +Z approaches the wall, opposite the normal that points toward the robot.
+    // Tool +Z approaches the wall, opposite the normal that points toward the robot. If MoveIt
+    // targets a flange instead of the physical contact point, keep the flange behind the contact.
     const Eigen::Quaterniond align = Eigen::Quaterniond::FromTwoVectors(
       Eigen::Vector3d::UnitZ(), -normal);
     const Eigen::Quaterniond roll(Eigen::AngleAxisd(tool_roll_, Eigen::Vector3d::UnitZ()));
     target.pose.orientation = to_msg((align * roll).normalized());
+    RCLCPP_INFO(
+      get_logger(),
+      "Target pose: clearance=%.4f m, contact_offset=%.4f m, effective=%.4f m, "
+      "target=(%.3f, %.3f, %.3f)",
+      clearance, end_effector_contact_offset_, effective_clearance,
+      target.pose.position.x, target.pose.position.y, target.pose.position.z);
     return target;
   }
 
@@ -435,10 +505,12 @@ private:
     moveit::planning_interface::MoveGroupInterface::Plan plan;
     moveit::core::MoveItErrorCode plan_result(moveit::core::MoveItErrorCode::FAILURE);
     std::string joint_error;
-    const auto current_joint1 = prefer_elbow_motion_ ?
+    const bool should_constrain_joint1 =
+      prefer_elbow_motion_ && !joint1_planning_tolerances_rad_.empty();
+    const auto current_joint1 = should_constrain_joint1 ?
       current_joint_position(joint1_name_, joint_error) : std::nullopt;
 
-    if (prefer_elbow_motion_ && current_joint1) {
+    if (should_constrain_joint1 && current_joint1) {
       for (const auto tolerance : joint1_planning_tolerances_rad_) {
         move_group_->setPathConstraints(joint1_path_constraint(*current_joint1, tolerance));
         RCLCPP_INFO(
@@ -453,7 +525,7 @@ private:
         }
       }
     } else {
-      if (prefer_elbow_motion_) {
+      if (should_constrain_joint1) {
         RCLCPP_WARN(
           get_logger(), "Cannot apply %s preference for %s: %s",
           joint1_name_.c_str(), plan_stage.c_str(), joint_error.c_str());
@@ -464,7 +536,7 @@ private:
     move_group_->setMaxVelocityScalingFactor(previous_velocity_scaling);
     if (plan_result != moveit::core::MoveItErrorCode::SUCCESS) {
       failed_stage = plan_stage;
-      if (prefer_elbow_motion_ && current_joint1) {
+      if (should_constrain_joint1 && current_joint1) {
         message = "MoveIt planning failed for " + plan_stage +
           " after trying bounded " + joint1_name_ +
           " tolerances; target was published for RViz";
@@ -654,10 +726,12 @@ private:
 
   std::string aruco_pose_topic_;
   std::string point_cloud_topic_;
+  std::string joint_state_topic_;
   std::string planning_group_;
   std::string move_group_namespace_;
   std::string end_effector_link_;
   std::string base_frame_;
+  double end_effector_contact_offset_{};
   double clearance_{};
   double crop_width_{};
   double crop_height_{};
@@ -687,12 +761,15 @@ private:
   std::mutex operation_mutex_;
   std::optional<geometry_msgs::msg::PoseStamped> marker_pose_;
   std::optional<sensor_msgs::msg::PointCloud2> cloud_;
+  std::optional<sensor_msgs::msg::JointState> last_joint_state_;
+  std::optional<rclcpp::Time> last_joint_received_;
   tf2_ros::Buffer tf_buffer_;
   tf2_ros::TransformListener tf_listener_;
   std::unique_ptr<moveit::planning_interface::PlanningSceneInterface> planning_scene_;
   std::unique_ptr<moveit::planning_interface::MoveGroupInterface> move_group_;
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr aruco_subscription_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_subscription_;
+  rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_subscription_;
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr target_publisher_;
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pre_touch_publisher_;
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr final_target_publisher_;

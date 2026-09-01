@@ -91,8 +91,8 @@ std::string normalise_direction(std::string direction)
 class SearchMarkerNode : public rclcpp::Node
 {
 public:
-  SearchMarkerNode()
-  : Node("search_marker_node")
+  explicit SearchMarkerNode(const rclcpp::NodeOptions & options = rclcpp::NodeOptions())
+  : Node("search_marker_node", options)
   {
     aruco_pose_topic_ = declare_parameter<std::string>("aruco_pose_topic", "/aruco_single/pose");
     joint_state_topic_ = declare_parameter<std::string>("joint_state_topic", "joint_states");
@@ -121,7 +121,7 @@ public:
     joint1_near_sweep_rad_ = declare_parameter<double>("joint1_near_sweep_rad", 1.6);
     joint4_reset_rad_ = declare_parameter<double>("joint4_reset_rad", 0.0);
     auto_horizontal_offset_rad_ = declare_parameter<double>("auto_horizontal_offset_rad", 2.0);
-    auto_vertical_offset_rad_ = declare_parameter<double>("auto_vertical_offset_rad", 0.45);
+    auto_vertical_offset_rad_ = declare_parameter<double>("auto_vertical_offset_rad", 0.525);
     vertical_lift_joint2_rad_ = declare_parameter<double>("vertical_lift_joint2_rad", 0.05);
     vertical_lift_joint3_rad_ = declare_parameter<double>("vertical_lift_joint3_rad", 0.08);
     auto_sequence_ = declare_parameter<std::vector<std::string>>(
@@ -187,6 +187,7 @@ public:
 
   void initialise_moveit(const rclcpp::Node::SharedPtr & node)
   {
+    ensure_default_kinematics_parameters();
     moveit::planning_interface::MoveGroupInterface::Options options(
       planning_group_, "robot_description", move_group_namespace_);
     move_group_ = std::make_unique<moveit::planning_interface::MoveGroupInterface>(
@@ -202,6 +203,23 @@ public:
   }
 
 private:
+  template<typename ParameterT>
+  void declare_if_missing(const std::string & name, const ParameterT & value)
+  {
+    if (!has_parameter(name)) {
+      declare_parameter<ParameterT>(name, value);
+    }
+  }
+
+  void ensure_default_kinematics_parameters()
+  {
+    const std::string prefix = "robot_description_kinematics." + planning_group_ + ".";
+    declare_if_missing(prefix + "kinematics_solver", "kdl_kinematics_plugin/KDLKinematicsPlugin");
+    declare_if_missing(prefix + "kinematics_solver_search_resolution", 0.005);
+    declare_if_missing(prefix + "kinematics_solver_timeout", 0.05);
+    declare_if_missing(prefix + "kinematics_solver_attempts", 3);
+  }
+
   static std::optional<double> stamp_to_seconds(const geometry_msgs::msg::PoseStamped & msg)
   {
     const auto & stamp = msg.header.stamp;
@@ -263,7 +281,7 @@ private:
       auto_horizontal_offset_rad_ = 2.0;
     }
     if (!std::isfinite(auto_vertical_offset_rad_) || auto_vertical_offset_rad_ <= 0.0) {
-      auto_vertical_offset_rad_ = 0.45;
+      auto_vertical_offset_rad_ = 0.525;
     }
     if (!std::isfinite(vertical_lift_joint2_rad_) || vertical_lift_joint2_rad_ <= 0.0) {
       vertical_lift_joint2_rad_ = 0.05;
@@ -460,6 +478,17 @@ private:
     return values;
   }
 
+  double planned_trajectory_duration_s(
+    const moveit::planning_interface::MoveGroupInterface::Plan & plan) const
+  {
+    const auto & trajectory = joint_trajectory_from_plan(plan, 0);
+    if (trajectory.points.empty()) {
+      return 0.0;
+    }
+    const auto & duration = trajectory.points.back().time_from_start;
+    return static_cast<double>(duration.sec) + static_cast<double>(duration.nanosec) * 1e-9;
+  }
+
   bool wait_for_physical_feedback_motion(
     const std::vector<double> & before,
     std::string & message)
@@ -483,6 +512,68 @@ private:
       "MoveIt reported execution success, but real joint feedback did not change by at least " +
       std::to_string(min_feedback_motion_deg_) +
       " deg. The AGX arm may be disabled, the control gate may be closed, or MoveIt may only be driving the ros2_control FakeSystem.";
+    return false;
+  }
+
+  bool monitor_motion_for_marker(
+    const std::vector<double> & before,
+    const std::vector<double> & expected_final,
+    const std::string & label,
+    const double plan_duration_s,
+    std::string & stage,
+    std::string & message)
+  {
+    const double timeout_s = std::max(
+      physical_motion_timeout_s_, plan_duration_s + physical_motion_timeout_s_);
+    const auto deadline = std::chrono::steady_clock::now() +
+      std::chrono::duration<double>(timeout_s);
+    bool saw_physical_motion = false;
+    std::string joint_message;
+
+    while (std::chrono::steady_clock::now() < deadline && rclcpp::ok()) {
+      if (continuously_confirmed_marker()) {
+        move_group_->stop();
+        stage = "marker_acquired_during_motion";
+        message = "continuous ArUco detection acquired marker during search target '" +
+          label + "'";
+        return true;
+      }
+
+      const auto current = current_joint_values(joint_message);
+      if (current) {
+        saw_physical_motion =
+          saw_physical_motion || max_abs_difference(before, *current) >= min_feedback_motion_rad_;
+        if (max_abs_difference(expected_final, *current) <= min_feedback_motion_rad_) {
+          stage = "search_motion_complete";
+          message = "completed reactive search target '" + label + "'";
+          return true;
+        }
+      }
+
+      rclcpp::sleep_for(50ms);
+    }
+
+    if (continuously_confirmed_marker()) {
+      move_group_->stop();
+      stage = "marker_acquired_during_motion";
+      message = "continuous ArUco detection acquired marker during search target '" +
+        label + "'";
+      return true;
+    }
+
+    if (saw_physical_motion) {
+      stage = "search_motion_complete";
+      message = "reactive search target '" + label +
+        "' moved physically; final joint feedback did not settle before timeout";
+      return true;
+    }
+
+    stage = "physical_motion";
+    message =
+      "MoveIt accepted the search trajectory, but real joint feedback did not change by at least " +
+      std::to_string(min_feedback_motion_deg_) +
+      " deg while monitoring for marker detection. The AGX arm may be disabled, the control gate "
+      "may be closed, or MoveIt may only be driving the ros2_control FakeSystem.";
     return false;
   }
 
@@ -571,18 +662,22 @@ private:
     const auto execute_result = move_group_->execute(plan);
     if (execute_result != moveit::core::MoveItErrorCode::SUCCESS) {
       stage = "search_execution";
-      message = "MoveIt execution failed for reactive search target '" + label + "'";
+      message = "MoveIt failed to execute reactive search target '" + label + "'";
       return false;
     }
+
     if (continuously_confirmed_marker()) {
       stage = "marker_acquired_during_motion";
-      message = "continuous ArUco detection acquired marker during search target '" + label + "'";
+      message = "continuous ArUco detection acquired marker during search target '" +
+        label + "'";
       return true;
     }
+
     if (!wait_for_physical_feedback_motion(current, message)) {
       stage = "physical_motion";
       return false;
     }
+
     stage = "search_motion_complete";
     message = "completed reactive search target '" + label + "'";
     return true;
@@ -1060,19 +1155,35 @@ private:
     const double original_j4 = std::clamp((*initial)[3], joint4_bounds->first, joint4_bounds->second);
 
     std::vector<double> sectors{
-      std::clamp((*initial)[0], joint1_bounds->first, joint1_bounds->second),
-      std::clamp((*initial)[0] + M_PI / 2.0, joint1_bounds->first, joint1_bounds->second),
       joint1_bounds->second,
-      std::clamp((*initial)[0] - M_PI / 2.0, joint1_bounds->first, joint1_bounds->second),
-      joint1_bounds->first,
-      std::clamp((*initial)[0], joint1_bounds->first, joint1_bounds->second)};
+      std::clamp(M_PI / 2.0, joint1_bounds->first, joint1_bounds->second),
+      std::clamp(0.0, joint1_bounds->first, joint1_bounds->second),
+      std::clamp(-M_PI / 2.0, joint1_bounds->first, joint1_bounds->second),
+      joint1_bounds->first};
 
     while (rclcpp::ok() && (max_steps_ == 0 || steps_used < max_steps_)) {
       for (std::size_t sector_index = 0; sector_index < sectors.size(); ++sector_index) {
         const double sector = sectors[sector_index];
-      double level_j2 = original_j2;
-      double level_j3 = original_j3;
-      while (rclcpp::ok() && (max_steps_ == 0 || steps_used < max_steps_)) {
+        double level_j2 = original_j2;
+        double level_j3 = original_j3;
+
+        std::vector<double> sector_start = *initial;
+        sector_start[0] = sector;
+        sector_start[1] = original_j2;
+        sector_start[2] = original_j3;
+        sector_start[3] = original_j4;
+        bool motion_ok = true;
+        if (move_target_and_allow_skips(
+            sector_start, "sector_" + std::to_string(sector_index) + "_start_original_height",
+            steps_used, found_at_pose, stage, message, motion_ok))
+        {
+          return true;
+        }
+        if (!motion_ok) {
+          return false;
+        }
+
+        while (rclcpp::ok() && (max_steps_ == 0 || steps_used < max_steps_)) {
         const double level_j4 = std::clamp(
           original_j4 - ((level_j2 - original_j2) + (level_j3 - original_j3)),
           joint4_bounds->first, joint4_bounds->second);
@@ -1117,7 +1228,6 @@ private:
           lift_target[3] = std::clamp(
             original_j4 - ((level_j2 - original_j2) + (level_j3 - original_j3)),
             joint4_bounds->first, joint4_bounds->second);
-          bool motion_ok = true;
           if (move_target_and_allow_skips(lift_target, "sector_" + std::to_string(sector_index) + "_lift", steps_used, found_at_pose, stage, message, motion_ok)) {
             return true;
           }
